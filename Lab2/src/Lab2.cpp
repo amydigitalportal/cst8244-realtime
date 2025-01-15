@@ -9,8 +9,6 @@
 #include <iostream>
 #include <string>
 #include <unistd.h>
-#include <limits.h>
-#include <stdio.h>
 #include <stdarg.h>
 using namespace std;
 
@@ -22,8 +20,6 @@ void Println(const std::string& message) {
     Print(message);
 	std::cout << std::endl;
 }
-
-void Println() { Println(""); }
 
 void Printf(const char* format, ...) {
     char buffer[1024]; // Temporary buffer for formatted output
@@ -40,18 +36,14 @@ int main() {
     // Prompt user to press 'q' to quit.
 	std::string input;
     while (true) {
-    	Println("---");
-    	Println("Hello World from QNX Neutrino RTOS!!!");
-    	Println("@author Amy Novun (novu0001@algonquinlive.com)");
-    	Println();
+    	Println("---\nHello World from QNX Neutrino RTOS!!!");
+    	Println("@author Amy Novun (novu0001@algonquinlive.com)\n");
 
-    	Println("Unique trait: I hoard dark chocolate in my fridge as an emergency food supply. :)");
-    	Println();
+    	Println("Unique trait: "
+    			"I hoard dark chocolate in my fridge as an emergency food supply. :)\n");
 
-        Printf("My PID is: %d \nMy Parent's PID is: %d", getpid(), getppid());
-        Println();
+        Printf("My PID is: %d \nMy Parent's PID is: %d\n\n", getpid(), getppid());
 
-        Println();
 		Println("Enter 'q' to quit:");
         std::getline(std::cin, input); // Reads the entire line, including blank lines
 
@@ -62,6 +54,5 @@ int main() {
             break; // Exit the loop
         }
     }
-
 	return 0;
 }
