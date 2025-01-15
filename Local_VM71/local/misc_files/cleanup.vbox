@@ -1,0 +1,32 @@
+#!/bin/bash
+
+VBOX=VBoxManage
+if ! which $VBOX >/dev/null 2>&1; then
+    if [ "${HOST_UNAME}" = WINNT ]; then
+        VBOX="/cygdrive/c/Program Files/Oracle/VirtualBox/VBoxManage.exe"
+        if [ ! -e "$VBOX" ]; then
+            VBOX="/cygdrive/c/Program Files (x86)/Oracle/VirtualBox/VBoxManage.exe"
+            if [ ! -e "$VBOX" ]; then
+                unset VBOX
+            fi
+        fi
+    else
+        # Momentics doesn't include /usr/local/bin so look for it there
+        if [ -x /usr/local/bin/VBoxManage ]; then
+            VBOX=/usr/local/bin/VBoxManage
+        else
+            unset VBOX
+        fi
+    fi
+    if [ -z "$VBOX" ]; then
+        exit 1
+    fi
+fi
+
+exec 1>output/vbox.log 2>&1
+
+vm_settings=`compgen -G local/vbox_files/*/*.vbox`
+if [ -n "$vm_settings" ]; then
+   sleep 1
+   "${VBOX}" unregistervm `pwd`/${vm_settings}
+fi
