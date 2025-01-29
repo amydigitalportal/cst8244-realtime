@@ -1,17 +1,3 @@
-/*
- ** sigint.c -- grabs SIGINT
- *
- * Read:	http://beej.us/guide/bgipc/html/single/bgipc.html#signals
- * Source:	http://beej.us/guide/bgipc/examples/sigint.c
- *
- * Modified by: hurdleg@algonquincollege.com
- *
- * Usage:
- *  From Momentics IDE, run program; notice PID; enter some text, but don't hit the enter key
- *  At Neutrino prompt, issue the command: kill -s SIGINT <PID>
- *
- */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -19,27 +5,25 @@
 #include <signal.h>
 
 void sigint_handler(int sig);
-
 volatile sig_atomic_t usr1Happened = 0;
 
-static char* pid_string() {
-	char* buffer = malloc(16);
-    if (buffer != NULL) {
-        snprintf(buffer, 16, "PID = %d", getpid());
-    }
-    return buffer;
+// Creates a formatted PID string
+static char* pid_formatted() {
+	char *buffer = malloc(16);
+	if (buffer != NULL) {
+		snprintf(buffer, 16, "PID = %d", getpid());
+	}
+	return buffer;
 }
 
-static void print_pid_msg(char* msg) {
-	char* pid_str = pid_string();
-	if (pid_str != NULL)
-	{
+// Function to print message with current PID.
+static void print_pid_msg(char *msg) {
+	char *pid_str = pid_formatted();
+	if (pid_str != NULL) {
 		printf("%s : %s\n", pid_str, msg);
 	}
 	free(pid_str);
 }
-
-
 
 // Signal handler function to handle SIGINT
 void sigint_handler(int sig) {
@@ -52,7 +36,7 @@ void sigint_handler(int sig) {
  ******************************************************************************/
 int main(void) {
 
-	struct sigaction sa;        // Declare a `sigaction` structure to configure the signal handler
+	struct sigaction sa; // Declare a `sigaction` structure to configure the signal handler
 
 	// Set the signal handler function for SIGINT
 	sa.sa_handler = sigint_handler; // Assign the handler function `sigint_handler` to handle SIGINT
@@ -63,7 +47,8 @@ int main(void) {
 	// Clear the signal mask (no signals are blocked while the handler runs)
 	sigemptyset(&sa.sa_mask);
 
-	// Use sigaction to register the SIGUSR1 signal type.
+	// -- Use sigaction to register the SIGUSR1 signal type.
+
 	// If sigaction fails ...
 	if (sigaction(SIGUSR1, &sa, NULL) == -1) {
 		// Print an error message and exit the program
@@ -74,11 +59,10 @@ int main(void) {
 	// Print the current process ID (PID) so you can interact with the program using signals if needed
 	print_pid_msg("Running ...");
 
+	// Loop until signal has been received
 	while (!usr1Happened) {
-		// Loop until signal has been received
 	}
 
 	print_pid_msg("Exiting.");
-
 	return 0; // Return 0 to indicate the program executed successfully
 }
