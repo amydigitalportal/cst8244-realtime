@@ -1,4 +1,4 @@
-/.metadata/
-
-**/output/**
-**/build/**
+/.metadata
+**/output
+**/build
+**/local
