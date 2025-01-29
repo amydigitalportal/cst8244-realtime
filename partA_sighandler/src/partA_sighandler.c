@@ -22,11 +22,35 @@ void sigint_handler(int sig);
 
 volatile sig_atomic_t usr1Happened = 0;
 
+
+// Signal handler function to handle SIGINT
+void sigint_handler(int sig) {
+	usr1Happened = 1;
+}
+
+static char* pid_string() {
+	char* buffer = malloc(16);
+    if (buffer != NULL) {
+        snprintf(buffer, 16, "PID = %d", getpid());
+    }
+    return buffer;
+}
+
+static void print_pid_msg(char* msg) {
+	char* pid_str = pid_string();
+	if (pid_str != NULL)
+	{
+		printf("%s : %s\n", pid_str, msg);
+	}
+	free(pid_str);
+}
+
+
 /*******************************************************************************
  * main( )
  ******************************************************************************/
 int main(void) {
-	char s[140];                // A character array (string) to store user input
+
 	struct sigaction sa;        // Declare a `sigaction` structure to configure the signal handler
 
 	// Set the signal handler function for SIGINT
@@ -47,24 +71,11 @@ int main(void) {
 	}
 
 	// Print the current process ID (PID) so you can interact with the program using signals if needed
-	printf("My PID is %d\n", getpid());
+	print_pid_msg("Running ...");
 
-	// Prompt the user to enter a string
-	printf("Enter a string:  ");
-
-	// Read a string from the user using `fgets`
-	if (fgets(s, sizeof(s), stdin) == NULL) {
-		// If `fgets` fails (e.g., due to an interrupted system call), print an error message
-		perror("fgets");
-	} else {
-		// Otherwise, print the string entered by the user
-		printf("You entered: %s\n", s);
+	while (!usr1Happened) {
+		// Loop until signal has been received
 	}
 
 	return 0; // Return 0 to indicate the program executed successfully
-}
-
-// Signal handler function to handle SIGINT
-void sigint_handler(int sig) {
-	usrHappened1 = 1;
 }
