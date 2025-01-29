@@ -22,12 +22,6 @@ void sigint_handler(int sig);
 
 volatile sig_atomic_t usr1Happened = 0;
 
-
-// Signal handler function to handle SIGINT
-void sigint_handler(int sig) {
-	usr1Happened = 1;
-}
-
 static char* pid_string() {
 	char* buffer = malloc(16);
     if (buffer != NULL) {
@@ -46,6 +40,13 @@ static void print_pid_msg(char* msg) {
 }
 
 
+
+// Signal handler function to handle SIGINT
+void sigint_handler(int sig) {
+	usr1Happened = 1;
+	print_pid_msg("Received USR1.");
+}
+
 /*******************************************************************************
  * main( )
  ******************************************************************************/
@@ -62,9 +63,9 @@ int main(void) {
 	// Clear the signal mask (no signals are blocked while the handler runs)
 	sigemptyset(&sa.sa_mask);
 
-	// Install the SIGINT handler using sigaction
+	// Use sigaction to register the SIGUSR1 signal type.
 	// If sigaction fails ...
-	if (sigaction(SIGINT, &sa, NULL) == -1) {
+	if (sigaction(SIGUSR1, &sa, NULL) == -1) {
 		// Print an error message and exit the program
 		perror("sigaction"); // Print the reason for failure
 		exit(1);             // Exit with a non-zero status to indicate an error
@@ -76,6 +77,8 @@ int main(void) {
 	while (!usr1Happened) {
 		// Loop until signal has been received
 	}
+
+	print_pid_msg("Exiting.");
 
 	return 0; // Return 0 to indicate the program executed successfully
 }
