@@ -6,15 +6,22 @@
 #include <unistd.h>
 
 #define MAX_THREADS 100
+#define SEMAPHORE_NAME "/thread_factory_semaphore"
 
-sem_t semaphore;
+sem_t *semaphore;
 volatile sig_atomic_t running = 1;
 
 void handle_sigusr1(int signo) {
 	if (signo == SIGUSR1) {
 		printf("\nReceived SIGUSR1, terminating program...\n");
 		running = 0;
-		sem_post(&semaphore); // Unblock any waiting threads
+
+        // Wake up all potentially blocked threads
+        for (int i = 0; i < MAX_THREADS; i++) {
+            sem_post(semaphore);
+        }
+
+        printf("All threads have been signaled to wake up.\n");
 	}
 }
 
@@ -24,7 +31,7 @@ void* thread_subroutine(void* arg) {
 	printf("Thread %d created.\n", thread_id);
 
 	while (running) {
-		sem_wait(&semaphore); // wait for semaphore
+		sem_wait(semaphore); // wait for semaphore
 
 		if (!running) // if program is terminating.
 			break;
@@ -64,8 +71,17 @@ int main(void) {
 	}
 
 
-	// Initialize the semaphore
-	sem_init(&semaphore, 0, 0);
+	sem_unlink(SEMAPHORE_NAME); // Remove any previous instance in case another process is still using it
+
+	// Initialize the named semaphore
+	int perms = 0666; // read-write for OWNER, GROUP, and OTHER
+	semaphore = sem_open(SEMAPHORE_NAME, O_CREAT, perms, 0);
+	// Check if semaphore failed to open
+	if (semaphore == SEM_FAILED) {
+	    perror("-- ERROR: `sem_open` failed!");
+	    exit(EXIT_FAILURE);
+	}
+
 
 	// Declare threads
 	pthread_t threads[MAX_THREADS];
@@ -98,39 +114,8 @@ int main(void) {
 		break;  // Valid input, exit loop.
 	}
 
-
-
-//	// Display parent PID.
-//	printf("\n");
-//	print_pid_msg("Parent running...");
-//	parent_pid = getpid(); // Store the parent's PID before forking
-
 	// For specified number of threads...
 	for (int i = 0; i < num_threads; i++) {
-//		// ... Fork process to spawn children.
-//		pid_t pid = fork();
-//
-//		// Check for failed fork.
-//		if (pid < 0) {
-//			printf("Fork failed at iteration: '%d'. Exiting process.\n", i);
-//			perror("Fork failed");
-//			exit(1);
-//		}
-//		// Otherwise...
-//		if (pid == 0) { // Child process
-//
-//			// Print child PID.
-//			print_pid_msg("Child running...");
-//
-//			// Loop until USR1 signal handler has performed.
-//			while (!usr1Happened) {
-//			}
-//
-//			// Report preparation to exit.
-//			print_pid_msg("Child exiting.");
-//			exit(EXIT_SUCCESS);
-//		}
-
 		// Allocate memory for thread id reference
 		int* thread_id = malloc(sizeof(int));
 		// Check if allocation failed
@@ -143,8 +128,10 @@ int main(void) {
 
 		// Attempt to create a new thread
 		if (pthread_create(&threads[i], NULL, thread_subroutine, thread_id) != 0) {
-            perror("-- ERROR: `pthread_create` failed!");
-            exit(EXIT_FAILURE);
+			perror("-- ERROR: `pthread_create` failed!");
+			free(thread_id); // free allocated memory
+
+			exit(EXIT_FAILURE);
 		}
 	}
 
@@ -156,25 +143,9 @@ int main(void) {
 	}
 
 	// Cleanup
-	sem_destroy(&semaphore);
+	sem_close(semaphore);
+
 	printf("Main thread exiting.\n");
-
-
-//
-//	// Parent: Waiting for all children
-//	int finished_children = 0;
-//	while (finished_children < num_children) {
-//		// Wait for any child to finish (and return its PID.)
-//		pid_t child_pid = wait(NULL);
-//
-//		if (child_pid > 0) { // Child process returned its PID.
-//			// Count the number of children finished
-//			finished_children++;
-//		}
-//	}
-
-//	// Report parent process done.
-//	print_pid_msg("Children finished, parent exiting.");
 
 	return 0; // Return 0 to indicate the program executed successfully
 }
