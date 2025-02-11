@@ -16,17 +16,17 @@ void handle_sigusr1(int signo) {
 		printf("\nReceived SIGUSR1, terminating program...\n");
 		running = 0;
 
-        // Wake up all potentially blocked threads
-        for (int i = 0; i < MAX_THREADS; i++) {
-            sem_post(semaphore);
-        }
+		// Wake up all potentially blocked threads
+		for (int i = 0; i < MAX_THREADS; i++) {
+			sem_post(semaphore);
+		}
 
-        printf("All threads have been signaled to wake up.\n");
+		printf("All threads have been signaled to wake up.\n");
 	}
 }
 
-void* thread_subroutine(void* arg) {
-	int thread_id = *(int*)arg;
+void* thread_subroutine(void *arg) {
+	int thread_id = *(int*) arg;
 	free(arg); // Free dynamic allocated mem
 	printf("Thread %d created.\n", thread_id);
 
@@ -70,7 +70,6 @@ int main(void) {
 		exit(1);             // Exit with a non-zero status to indicate an error
 	}
 
-
 	sem_unlink(SEMAPHORE_NAME); // Remove any previous instance in case another process is still using it
 
 	// Initialize the named semaphore
@@ -78,10 +77,9 @@ int main(void) {
 	semaphore = sem_open(SEMAPHORE_NAME, O_CREAT, perms, 0);
 	// Check if semaphore failed to open
 	if (semaphore == SEM_FAILED) {
-	    perror("-- ERROR: `sem_open` failed!");
-	    exit(EXIT_FAILURE);
+		perror("-- ERROR: `sem_open` failed!");
+		exit(EXIT_FAILURE);
 	}
-
 
 	// Declare threads
 	pthread_t threads[MAX_THREADS];
@@ -104,10 +102,13 @@ int main(void) {
 
 		// Attempt to convert input to an integer.
 		if (sscanf(input, "%d", &num_threads) != 1) {
-			printf("-- ERROR: Invalid input! Please enter a non-negative integer.\n");
+			printf(
+					"-- ERROR: Invalid input! Please enter a non-negative integer.\n");
 			continue;  // Ask again.
 		} else if (num_threads <= 0 || num_threads > MAX_THREADS) {
-			printf("-- ERROR: Invalid number of threads. Max threads allowed: %d\n", MAX_THREADS);
+			printf(
+					"-- ERROR: Invalid number of threads. Max threads allowed: %d\n",
+					MAX_THREADS);
 			continue;
 		}
 
@@ -117,7 +118,7 @@ int main(void) {
 	// For specified number of threads...
 	for (int i = 0; i < num_threads; i++) {
 		// Allocate memory for thread id reference
-		int* thread_id = malloc(sizeof(int));
+		int *thread_id = malloc(sizeof(int));
 		// Check if allocation failed
 		if (!thread_id) {
 			perror("-- ERROR: malloc failed!");
@@ -127,7 +128,8 @@ int main(void) {
 		*thread_id = i + 1;
 
 		// Attempt to create a new thread
-		if (pthread_create(&threads[i], NULL, thread_subroutine, thread_id) != 0) {
+		if (pthread_create(&threads[i], NULL, thread_subroutine, thread_id)
+				!= 0) {
 			perror("-- ERROR: `pthread_create` failed!");
 			free(thread_id); // free allocated memory
 
@@ -135,7 +137,8 @@ int main(void) {
 		}
 	}
 
-	printf("All threads created. Use 'kill -s SIGUSR1 %d' to terminate.\n", getpid());
+	printf("All threads created. Use 'kill -s SIGUSR1 %d' to terminate.\n",
+			getpid());
 
 	// Keep the main thread alive until SIGUSR1 is received
 	while (running) {
