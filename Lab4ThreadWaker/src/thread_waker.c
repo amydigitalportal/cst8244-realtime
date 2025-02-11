@@ -19,15 +19,25 @@ int main(void) {
 		return EXIT_FAILURE;
 	}
 
+	char input[100];  // Buffer for input
+
 	while (1) {
 		// Prompt user input
 		printf("Enter number of threads to wake up (0 to exit): ");
-		scanf("%d", &num_wakeups);
 
-		if (num_wakeups <= 0) {
-			printf("Exiting thread_waker...\n");
-			break;
+		// Read input as a string
+		fgets(input, sizeof(input), stdin);
+
+		// Convert input to an integer
+		if (sscanf(input, "%d", &num_wakeups) != 1) {
+			printf("-- ERROR: Invalid input! Please enter a number.\n");
+			continue;  // Ask again
 		}
+
+	    if (num_wakeups <= 0) {
+	        printf("Exiting thread_waker...\n");
+	        break;
+	    }
 
 		// Increment the semaphore by the specified number
 		for (int i = 0; i < num_wakeups; i++) {
