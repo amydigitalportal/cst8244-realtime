@@ -24,7 +24,7 @@ int main(void) {
 		exit(EXIT_FAILURE);
 	}
 
-	printf("Server started. Channel ID: %d\n", chid);
+	printf("Server started (PID: %d). Channel ID: %d\n", getpid(), chid);
 
 	// Begin Server Loop
 	while (1) {
