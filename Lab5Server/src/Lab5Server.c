@@ -37,39 +37,42 @@ int main(void) {
 
 		// Default response status
 		response.statusCode = SRVR_OK;
-        response.answer = 0;
-        snprintf(response.errorMsg, sizeof(response.errorMsg), "No error");
+		response.answer = 0;
+		snprintf(response.errorMsg, sizeof(response.errorMsg), "No error");
 
 		double lhs = (double) client_message.left_hand;
 		double rhs = (double) client_message.right_hand;
 
 		// Decide on operation based on client_message.operator
 		switch (client_message.operator) {
-			case '+':
-				response.answer = lhs + rhs;
-				break;
-			case '-':
-				response.answer = lhs - rhs;
-				break;
-			case '*':
-				response.answer = lhs * rhs;
-				break;
-			case '/':
-				if (rhs != 0) {
-					response.answer = lhs / rhs;
-				} else {
-                    response.statusCode = SRVR_UNDEFINED;
-                    snprintf(response.errorMsg, sizeof(response.errorMsg), "Division by zero");
-				}
-				break;
-			default:
-                response.statusCode = SRVR_INVALID_OPERATOR;
-                snprintf(response.errorMsg, sizeof(response.errorMsg), "Invalid operator: %c", client_message.operator);
-                break;
+		case '+':
+			response.answer = lhs + rhs;
+			break;
+		case '-':
+			response.answer = lhs - rhs;
+			break;
+		case '*':
+			response.answer = lhs * rhs;
+			break;
+		case '/':
+			if (rhs != 0) {
+				response.answer = lhs / rhs;
+			} else {
+				response.statusCode = SRVR_UNDEFINED;
+				snprintf(response.errorMsg, sizeof(response.errorMsg),
+						"Division by zero");
+			}
+			break;
+		default:
+			response.statusCode = SRVR_INVALID_OPERATOR;
+			snprintf(response.errorMsg, sizeof(response.errorMsg),
+					"Invalid operator: %c", client_message.operator);
+			break;
 		}
 
 		// Reply to the Client
-		int replyStatus = MsgReply(rcvid, EOK, &response, sizeof(server_response_t));
+		int replyStatus = MsgReply(rcvid, EOK, &response,
+				sizeof(server_response_t));
 		if (replyStatus == -1) {
 			perror("MsgReply failed");
 		}

@@ -15,14 +15,15 @@ int main(int argc, char *argv[]) {
 
 	// Validate the number of command-line args.
 	if (argc != 5) {
-		fprintf(stderr, "Usage: %s <server-pid> <left> <operator> <right>", argv[0]);
+		fprintf(stderr, "Usage: %s <server-pid> <left> <operator> <right>",
+				argv[0]);
 		exit(EXIT_FAILURE);
 	}
 
 	// Parse command-line args.
 	pid_t server_pid = atoi(argv[1]);
-	msg_send.left_hand 	= atoi(argv[2]);
-	msg_send.operator 	= argv[3][0]; // Access first character of the argument string
+	msg_send.left_hand = atoi(argv[2]);
+	msg_send.operator = argv[3][0]; // Access first character of the argument string
 	msg_send.right_hand = atoi(argv[4]);
 
 	// Connect to the server channel.
@@ -33,7 +34,8 @@ int main(int argc, char *argv[]) {
 	}
 
 	// Send message to the server and receive the response.
-	int send_response = MsgSend(coid, &msg_send, sizeof(msg_send), &msg_receive, sizeof(msg_receive));
+	int send_response = MsgSend(coid, &msg_send, sizeof(msg_send), &msg_receive,
+			sizeof(msg_receive));
 	if (send_response == -1) {
 		perror("MsgSend failed");
 		ConnectDetach(coid); // Safely detach from channel.
@@ -42,13 +44,11 @@ int main(int argc, char *argv[]) {
 	// Process server's response.
 	if (msg_receive.statusCode == SRVR_OK) {
 		printf("The server has calculated the result: %d %c %d = %f\n",
-				msg_send.left_hand,
-				msg_send.operator,
-				msg_send.right_hand,
-				msg_receive.answer
-		);
+				msg_send.left_hand, msg_send.operator, msg_send.right_hand,
+				msg_receive.answer);
 	} else {
-		fprintf(stderr, "Error: %s (Code: %d)\n", msg_receive.errorMsg, msg_receive.statusCode);
+		fprintf(stderr, "Error: %s (Code: %d)\n", msg_receive.errorMsg,
+				msg_receive.statusCode);
 	}
 
 	// CLIENT SCRIPT FINISHED!
