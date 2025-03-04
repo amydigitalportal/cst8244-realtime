@@ -73,9 +73,9 @@ int main(void) {
 		if (replyStatus == -1) {
 			perror("MsgReply failed");
 		}
-
-		// Cleanup for future loop exit mechanism.
-//		ChannelDestroy(chid);
-		return EXIT_SUCCESS;
 	}
+
+	// Cleanup for future loop exit mechanism.
+//		ChannelDestroy(chid);
+	return EXIT_SUCCESS;
 }
