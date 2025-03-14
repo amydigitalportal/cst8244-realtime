@@ -1,8 +1,46 @@
+#include <ctype.h>
 #include "../../des_controller/src/des.h"
+
+#define MAX_INPUT_SIZE 32
+
+// Lookup table for reverse mapping
+typedef struct {
+    const char *name;
+    EventType event;
+} EventLookup;
+
+const EventLookup eventTable[] = {
+    { "LS", EVENT_LS }, { "GLU", EVENT_GLU }, { "GLL", EVENT_GLL }, { "LO", EVENT_LO },
+    { "LC", EVENT_LC }, { "RS", EVENT_RS }, { "GRU", EVENT_GRU }, { "GRL", EVENT_GRL },
+    { "RO", EVENT_RO }, { "RC", EVENT_RC }, { "WS", EVENT_WS }, { "EXIT", EVENT_EXIT },
+    { NULL, -1 }  // End marker
+};
+
 
 
 int coid;
 DES_Message device_request;
+
+
+/**
+ * Helper function to handle input.
+ */
+void getUserInput(char *buffer, size_t size) {
+    if (fgets(buffer, size, stdin) != NULL) {
+        buffer[strcspn(buffer, "\n")] = '\0';  // Remove newline
+    }
+}
+
+// Function to convert string to EventType
+EventType getEventType(const char *input) {
+    for (int i = 0; eventTable[i].name != NULL; i++) {
+    	// Convert input to upper-case then compare it to the lookup table.
+        if (strcmp(strupr(input), eventTable[i].name) == 0) {
+            return eventTable[i].event;
+        }
+    }
+    return EVENT_UNKNOWN;  // If not found
+}
 
 // Blocking function to send a DES_Message to the controller.
 void sendMessage() {
@@ -33,6 +71,31 @@ void simulate_event(EventType eventType, int data) {
 	sendMessage();
 }
 
+void processEventType(EventType eventType) {
+    switch (eventType) {
+    case EVENT_LS:
+    case EVENT_RS: {
+    	char inputBuffer[30];
+    	printf("Activating scanner! Please enter `person_id` (%d to %d): \n", VALID_PERSON_ID_MIN, VALID_PERSON_ID_MAX);
+		getUserInput(inputBuffer, sizeof(inputBuffer));
+		int personId = atoi(inputBuffer);
+		simulate_event(eventType, personId);
+    	break;
+    }
+    case EVENT_WS: {
+    	char inputBuffer[30];
+    	printf("Activating weight scale! Please enter person's `weight` (no decimals): \n");
+		getUserInput(inputBuffer, sizeof(inputBuffer));
+		int weight = atoi(inputBuffer);
+		simulate_event(eventType, weight);
+    	break;
+    }
+    default:
+    	simulate_event(eventType, -1);
+    	break;
+    }
+}
+
 int main(int argc, char *argv[]) {
 
 	// Validate number of command arguments.
@@ -54,25 +117,77 @@ int main(int argc, char *argv[]) {
 		return EXIT_FAILURE;
 	}
 
-	EventType automated_inputs[] = {
-			EVENT_LS,
-			EVENT_GLU,
-			EVENT_LO,
-			EVENT_WS,
-			EVENT_LC,
-			EVENT_GLL,
-			EVENT_GRU,
-			EVENT_RO,
-			EVENT_RC,
-			EVENT_GRL,
-			EVENT_GRL
-	};
-	const size_t seqlen = sizeof(automated_inputs) / sizeof(automated_inputs[0]);
+//	EventType automated_inputs[] = {
+//			EVENT_LS,
+//			EVENT_GLU,
+//			EVENT_LO,
+//			EVENT_WS,
+//			EVENT_LC,
+//			EVENT_GLL,
+//			EVENT_GRU,
+//			EVENT_RO,
+//			EVENT_RC,
+//			EVENT_GRL,
+//			EVENT_GRL
+//	};
 
-	for (int i = 0; i < seqlen; i++) {
-		simulate_event(automated_inputs[i], -1);
-		sleep(2);
+//	EventType automated_inputs[] = {
+//			EVENT_LS
+//			, EVENT_GLU
+//			, EVENT_LO
+//			, EVENT_WS
+//			, EVENT_LC
+//			, EVENT_GLL
+//			, EVENT_GRU
+//			, EVENT_RO
+//			, EVENT_RC
+//			, EVENT_GRL
+//			, EVENT_RS
+//			, EVENT_GRU
+//			, EVENT_RO
+//			, EVENT_WS
+//			, EVENT_RC
+//			, EVENT_GRL
+//			, EVENT_GLU
+//			, EVENT_LO
+//			, EVENT_LC
+//			, EVENT_GLL
+//			, EVENT_GLL
+//	};
+//
+//	const size_t seqlen = sizeof(automated_inputs) / sizeof(automated_inputs[0]);
+//
+//	for (int i = 0; i < seqlen; i++) {
+//		simulate_event(automated_inputs[i], -1);
+//		sleep(1.8);
+//	}
+
+//	simulate_event(EVENT_LS, -1);
+//	sleep(1.5);
+//	simulate_event(EVENT_LS, 12345);
+//	sleep(3);
+	char inputBuffer[30];
+
+	printf("\n-- Enter the event type (ls= left scan, rs= right scan, ws= weight scale, lo =left open, "
+			"ro=right open, lc = left closed, rc = right closed , gru = guard right unlock, grl = guard, "
+			"right lock, gll=guard left lock, glu = guard left unlock)\n\n");
+
+	while (1) {
+
+		getUserInput(inputBuffer, sizeof(inputBuffer));
+
+        // Compare and process commands
+        EventType eventType = getEventType(inputBuffer); // Convert string to upper case.
+
+        // Handle 'exit' case.
+        if (eventType == EVENT_EXIT) {
+        	break;
+        }
+
+        processEventType(eventType);
 	}
+
+
 
 	// Safely detach from connection.
 	ConnectDetach(coid);
