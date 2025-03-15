@@ -1,5 +1,4 @@
 #include "des.h"
-#include "buffer_manager.h"
 #include <sys/neutrino.h>
 #include <sys/dispatch.h>
 #include <stdio.h>
@@ -7,7 +6,8 @@
 #include <unistd.h>
 
 
-int chid = -1;  // QNX Channel ID
+int chid = -1; // QNX Server Channel ID
+int display_pid = -1; // DES Display PID for IPC
 
 DES_Message device_request;
 DES_State *currentState;
@@ -58,9 +58,27 @@ void updateDisplay(const char *format, ...) {
     va_end(args);
 
     write_to_buffer("%s", temp_buffer);
-    printf("%s\n", pGlobalBuffer); // Immediately print the buffer
+//    printf("%s\n", pGlobalBuffer); // Immediately print the buffer
 
-     // TODO: implement SendMsg
+
+	// Send IPC message
+
+    int coid = ConnectAttach(0, display_pid, 1, _NTO_SIDE_CHANNEL, 0);
+    if (coid == -1) {
+        perror("ConnectAttach to des_display failed");
+        return;
+    }
+
+	DisplayMessage msg;
+	strncpy(msg.payload, pGlobalBuffer, BUFFER_SIZE - 1);
+	msg.payload[BUFFER_SIZE - 1] = '\0'; // Ensure null termination
+
+	// Send message to the display
+	if (MsgSend(coid, &msg, sizeof(msg), NULL, 0) == -1) {
+		perror("Controller: MsgSend failed");
+	}
+
+    ConnectDetach(coid);
 }
 
 // Blocking function to receive a DES_Message from des_inputs.
@@ -70,10 +88,11 @@ void receiveMessage() {
         perror("MsgReceive failed");
     } else {
     	const char* inputCode = getInputCode(device_request.eventType);
+    	printf("\n[des_controller] received input: ");
     	if (device_request.data >= 0) {
-        	printf("\ndes_controller: {%s, '%d'}\n\n", inputCode, device_request.data);
+        	printf("{%s, '%d'}", inputCode, device_request.data);
     	} else {
-        	printf("\ndes_controller: {%s}\n\n", inputCode);
+        	printf("{%s}", inputCode);
     	}
 
         // Acknowledge receipt.
@@ -243,7 +262,7 @@ DES_State *handle_entry_opened_state() {
 	switch (device_request.eventType) {
 	case EVENT_WS:
 		registeredWeight = weightReading;
-		updateDisplay("%s", getOutputMessage(STATE_WEIGHT_MEASURED));
+		updateDisplay("%s\n", getOutputMessage(STATE_WEIGHT_MEASURED));
 		next_state = &weight_measured_state;
 		break;
 	case EVENT_LC:
@@ -655,13 +674,23 @@ DES_State *handle_final_state() {
 //}
 
 //–––––– MAIN FSM LOOP ––––––
-int main(void) {
+int main(int argc, char *argv[]) {
+
+	// Validate number of command arguments.
+	if (argc != 2) {
+		fprintf(stderr, "Usage: %s <display-pid>",
+				argv[0]);
+		exit(EXIT_FAILURE);
+	}
+
+	// Parse command-line args.
+	display_pid = atoi(argv[1]); // Used for outgoing IPC in updateDisplay()
+
+
+	// -- BEGIN Controller Server Logic.
 
 	device_request.eventType = -1;
 	device_request.data = -1;
-
-    // Print the controller's process ID
-    printf("des_controller: running with process id %d\n\n", getpid());
 
     // Create a QNX channel for IPC
     chid = ChannelCreate(0);
@@ -669,6 +698,9 @@ int main(void) {
         perror("ChannelCreate failed");
         return EXIT_FAILURE;
     }
+
+    printf("des_controller PID: %d, receiving inputs on channel %d\n", getpid(), chid);
+
 
     // Start the FSM in the IDLE state
     currentState = &initial_state;
@@ -682,7 +714,7 @@ int main(void) {
 //    	printf("R.isEntrance = %d , L.isEntrance = %d \n", rightDoor.isEntrance, leftDoor.isEntrance);
     	printf("\n");
     	receiveMessage(); // Listens for requests from external devices.
-    	printf("des_controller: Message received: {%s}\n", getInputCode(device_request.eventType));
+//    	printf("des_controller: Message received: {%s}\n", getInputCode(device_request.eventType));
     }
 
     return EXIT_SUCCESS;

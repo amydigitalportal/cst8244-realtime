@@ -14,6 +14,7 @@
 #include <sys/neutrino.h>  // For QNX messaging
 #include <errno.h>         // For error handling
 #include <string.h>        // For memset
+#include "buffer_manager.h"
 
 #define VALID_PERSON_ID_MIN 10000
 #define VALID_PERSON_ID_MAX 99999
@@ -56,6 +57,10 @@ typedef struct {
     EventType eventType; // Type of event received
     int data;
 } DES_Message;
+
+typedef struct {
+	char payload[BUFFER_SIZE];
+} DisplayMessage;
 
 /**
  * Function for retrieving an input code for a specific event type,
