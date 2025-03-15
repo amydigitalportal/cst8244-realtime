@@ -117,55 +117,6 @@ int main(int argc, char *argv[]) {
 		return EXIT_FAILURE;
 	}
 
-//	EventType automated_inputs[] = {
-//			EVENT_LS,
-//			EVENT_GLU,
-//			EVENT_LO,
-//			EVENT_WS,
-//			EVENT_LC,
-//			EVENT_GLL,
-//			EVENT_GRU,
-//			EVENT_RO,
-//			EVENT_RC,
-//			EVENT_GRL,
-//			EVENT_GRL
-//	};
-
-//	EventType automated_inputs[] = {
-//			EVENT_LS
-//			, EVENT_GLU
-//			, EVENT_LO
-//			, EVENT_WS
-//			, EVENT_LC
-//			, EVENT_GLL
-//			, EVENT_GRU
-//			, EVENT_RO
-//			, EVENT_RC
-//			, EVENT_GRL
-//			, EVENT_RS
-//			, EVENT_GRU
-//			, EVENT_RO
-//			, EVENT_WS
-//			, EVENT_RC
-//			, EVENT_GRL
-//			, EVENT_GLU
-//			, EVENT_LO
-//			, EVENT_LC
-//			, EVENT_GLL
-//			, EVENT_GLL
-//	};
-//
-//	const size_t seqlen = sizeof(automated_inputs) / sizeof(automated_inputs[0]);
-//
-//	for (int i = 0; i < seqlen; i++) {
-//		simulate_event(automated_inputs[i], -1);
-//		sleep(1.8);
-//	}
-
-//	simulate_event(EVENT_LS, -1);
-//	sleep(1.5);
-//	simulate_event(EVENT_LS, 12345);
-//	sleep(3);
 	char inputBuffer[30];
 
 	printf("\n-- Enter the event type (ls= left scan, rs= right scan, ws= weight scale, lo =left open, "
@@ -184,8 +135,6 @@ int main(int argc, char *argv[]) {
         if (eventType == EVENT_EXIT)
         	break;
 	}
-
-
 
 	// Safely detach from connection.
 	ConnectDetach(coid);
