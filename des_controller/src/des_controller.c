@@ -13,8 +13,9 @@ DES_Message device_request;
 DES_State *currentState;
 int isAccessAuthorized = 0;
 
-Door leftDoor;
-Door rightDoor;
+Door leftDoor = {0};
+Door rightDoor = {0};
+int registeredWeight = 0;
 
 // Forward declarations of state handler functions
 DES_State *handle_initial_state(void);
@@ -28,7 +29,6 @@ DES_State *handle_entry_secured_state(void);
 DES_State *handle_exit_opened_state(void);
 DES_State *handle_exit_closed_state(void);
 DES_State *handle_exit_unlocked_state(void);
-DES_State *handle_exit_secured_state(void);
 DES_State *handle_cleanup_state(void);
 DES_State *handle_weight_measured_state(void);
 
@@ -44,22 +44,10 @@ DES_State entry_secured_state 		= { STATE_ENTRY_SECURED, 	handle_entry_secured_s
 DES_State exit_opened_state 		= { STATE_EXIT_OPENED, 		handle_exit_opened_state 		};
 DES_State exit_closed_state 		= { STATE_EXIT_CLOSED, 		handle_exit_closed_state 		};
 DES_State exit_unlocked_state 		= { STATE_EXIT_UNLOCKED, 	handle_exit_unlocked_state 		};
-DES_State exit_secured_state 		= { STATE_EXIT_SECURED, 	handle_exit_secured_state 		};
 DES_State cleanup_state 			= { STATE_CLEANUP, 			handle_cleanup_state 			};
 DES_State weight_measured_state 	= { STATE_WEIGHT_MEASURED, 	handle_weight_measured_state 	};
 
 
-
-// Function to send a message to des_display to have it updated.
-//void updateDisplay() {
-//	const char* outputMessage = getOutputMessage(device_request.eventType);
-//	if (device_request.data >= 0) {
-//    	printf("des_controller: {%s, '%d'}\n", outputMessage, device_request.data);
-//	} else {
-//    	printf("des_controller: {%s}\n", outputMessage);
-//	}
-//    // TODO: implement SendMsg
-//}
 void updateDisplay(const char *format, ...) {
     va_list args;
     va_start(args, format);
@@ -71,6 +59,7 @@ void updateDisplay(const char *format, ...) {
 
     write_to_buffer("%s", temp_buffer);
     printf("%s\n", pGlobalBuffer); // Immediately print the buffer
+
      // TODO: implement SendMsg
 }
 
@@ -92,21 +81,45 @@ void receiveMessage() {
     }
 }
 
-void updateStateMachine() {
+DES_StateID updateStateMachine() {
 	if (device_request.eventType < 0) {
-		return;
+		return -1;
 	}
 
 	// perform the state's function and retrieve next state
 	DES_State *nextState = currentState->handler();
+
 	// Capture the next state.
 	currentState = nextState;
+
+	// Handle CLEANUP phase.
+	if (currentState->id == STATE_CLEANUP) {
+		updateDisplay("%s\n", getOutputMessage(STATE_CLEANUP));
+
+	    ChannelDestroy(chid);
+
+	    // Force Transition to Final State
+	    currentState = &final_state;
+	    updateDisplay("%s\n", getOutputMessage(STATE_FINAL));
+	    return STATE_FINAL;
+	}
+
+	return currentState->id;
 }
 
 void resetDoor(Door *door) {
-	door->isEntrance = 0;
-	door->isOpened = 0;
-	door->isUnlocked = 0;
+	if (door) {
+		door->isEntrance = 0;
+		door->isOpened = 0;
+		door->isUnlocked = 0;
+	}
+}
+
+void reinitialize() {
+	isAccessAuthorized = 0;
+	resetDoor(&leftDoor);
+	resetDoor(&rightDoor);
+	registeredWeight = 0;
 }
 
 int validateCredentials(int personId, Door *entranceDoor) {
@@ -151,19 +164,21 @@ DES_State *handle_idle_state() {
 	case EVENT_EXIT:
 		updateDisplay("%s ... ", getOutputMessage(STATE_CLEANUP));
 		return &cleanup_state;
+	// perform authentication
 	case EVENT_LS: 	authSuccess = validateCredentials(person_id, &leftDoor); break;
 	case EVENT_RS:	authSuccess = validateCredentials(person_id, &rightDoor); break;
 	default: break;
 	}
 
+	isAccessAuthorized = authSuccess;
+
 	if (device_request.eventType == EVENT_LS || device_request.eventType == EVENT_RS) {
-		if (authSuccess) {
+		if (isAccessAuthorized) {
 //			printf("(person_id: %d) AUTHORIZED. %s ...\n", person_id, getOutputMessage(access_granted_state.id));
-			updateDisplay("(person_id: %d) AUTHORIZED. %s ...\n", person_id, getOutputMessage(access_granted_state.id));
+			updateDisplay("(person_id: %d) AUTHORIZED. %s\n", person_id, getOutputMessage(access_granted_state.id));
 			next_state = &access_granted_state;
 		} else {
 			updateDisplay("(person_id: %d) DENIED. Maintaining idle state ...\n");
-			next_state = &idle_state;
 		}
 	} else {
 		handleInvalidInputRequest();
@@ -177,25 +192,7 @@ DES_State *handle_access_granted_state() {
 
 	switch (device_request.eventType) {
 	case EVENT_GLU:
-//		if (leftDoor.isEntrance)
-//		{
-//			leftDoor.isUnlocked = 1;
-//			updateDisplay("%s ...\n", getOutputMessage(STATE_ENTRY_UNLOCKED));
-//			next_state = &entry_unlocked_state;
-//		} else {
-//			updateDisplay("Error: another access point is awaiting unlock.");
-//		}
-//		break;
-//	case EVENT_GRU:
 	case EVENT_GRU: {
-//		if (rightDoor.isEntrance)
-//		{
-//			rightDoor.isUnlocked = 1;
-//			updateDisplay("%s ...\n", getOutputMessage(STATE_ENTRY_UNLOCKED));
-//			next_state = &entry_unlocked_state;
-//		} else {
-//			updateDisplay("Error: another access point is awaiting unlock.");
-//		}
 		Door *targetDoor = (device_request.eventType == EVENT_GLU) ? &leftDoor : &rightDoor;
 		if (targetDoor->isEntrance) {
 			targetDoor->isUnlocked = 1;
@@ -216,42 +213,118 @@ DES_State *handle_access_granted_state() {
 
 
 DES_State *handle_entry_closed_state() {
-	DES_State *next_state;
+	DES_State *next_state = &entry_closed_state;
+
+	switch (device_request.eventType) {
+	case EVENT_GLL:
+	case EVENT_GRL: {
+		Door *targetDoor = (device_request.eventType == EVENT_GLL) ? &leftDoor : &rightDoor;
+		if (targetDoor->isEntrance) {
+			targetDoor->isUnlocked = 0;
+			updateDisplay("%s\n", getOutputMessage(STATE_ENTRY_SECURED));
+			next_state = &entry_secured_state;
+		} else {
+			updateDisplay("Error: a different door is currently waiting to be secured! Maintaining 'ENTRY_CLOSED' state.");
+		}
+		break;
+	}
+	default:
+		handleInvalidInputRequest();
+		break;
+	}
+
 	return next_state;
 }
 
 DES_State *handle_entry_opened_state() {
-	DES_State *next_state;
+	DES_State *next_state = &entry_opened_state;
+	int weightReading = device_request.data;
+
+	switch (device_request.eventType) {
+	case EVENT_WS:
+		registeredWeight = weightReading;
+		updateDisplay("%s", getOutputMessage(STATE_WEIGHT_MEASURED));
+		next_state = &weight_measured_state;
+		break;
+	case EVENT_LC:
+	case EVENT_RC: {
+		Door *targetDoor = (device_request.eventType == EVENT_LC) ? &leftDoor : &rightDoor;
+		// Check if target door is the EXIT door.
+		if (!targetDoor->isEntrance) {
+			updateDisplay("Error: another access point is awaiting unlock.");
+		} else {
+			targetDoor->isOpened = 0;
+			updateDisplay("%s\n", getOutputMessage(STATE_ENTRY_CLOSED));
+			next_state = &entry_closed_state;
+		}
+		break;
+	}
+	default:
+		handleInvalidInputRequest();
+		break;
+	}
+
 	return next_state;
 }
 
 DES_State *handle_entry_secured_state() {
-	DES_State *next_state;
+	DES_State *next_state = &entry_secured_state;
+
+	// Handle unoccupied control point.
+	if (registeredWeight <= 0) {
+		// Transition to idle state.
+		updateDisplay("Door cycle cancelled - %s\n", getOutputMessage(STATE_IDLE));
+		reinitialize();
+		next_state = &idle_state;
+	}
+	else
+	// Handle occupied control point.
+	{
+		switch (device_request.eventType) {
+		case EVENT_GLU:
+		case EVENT_GRU: {
+			Door *targetDoor = (device_request.eventType == EVENT_GLU) ? &leftDoor : &rightDoor;
+			if (targetDoor->isEntrance) {
+				updateDisplay("Error: a different door is awaiting unlock! Maintaining 'ENTRY_SECURED' state.");
+			} else {
+				targetDoor->isUnlocked = 1;
+				updateDisplay("%s\n", getOutputMessage(STATE_EXIT_UNLOCKED));
+				next_state = &exit_unlocked_state;
+			}
+			break;
+		}
+		default:
+			handleInvalidInputRequest();
+			break;
+		}
+	}
+
 	return next_state;
 }
 
 DES_State *handle_entry_unlocked_state() {
 	DES_State *next_state = &entry_unlocked_state;
+
 	switch (device_request.eventType) {
 	case EVENT_LO:
 	case EVENT_RO: {
 		Door *targetDoor = (device_request.eventType == EVENT_LO) ? &leftDoor : &rightDoor;
-		if (targetDoor->isEntrance) {
-			// Check if the door has been unlocked
-			if (targetDoor->isUnlocked) {
+		if (!targetDoor->isEntrance) {
+			updateDisplay("Error: a different entry door is currently unlocked! Maintaining 'ENTRY_UNLOCKED' state.");
+		} else {
+			// Check if the door is still locked
+			if (!targetDoor->isUnlocked) {
+				updateDisplay("Error: Cannot open locked door! Maintaining 'ENTRY_UNLOCKED' state.");
+			} else {
 				targetDoor->isOpened = 1;
 				updateDisplay("%s\n", getOutputMessage(STATE_ENTRY_OPENED));
 				next_state = &entry_opened_state;
-			} else {
-				updateDisplay("Error: Door not yet unlocked! Maintaining 'ENTRY_UNLOCKED' state.");
 			}
-		} else {
-			updateDisplay("Error: another door is currently unlocked! Maintaining 'ENTRY_UNLOCKED' state.");
 		}
 		break;
 	}
 	default:
-		updateDisplay("Error: '%s' for input {%s}! Maintaining 'ACCESS_GRANTED' state.", getOutputMessage(-1), getInputCode(device_request.eventType));
+		handleInvalidInputRequest();
 		break;
 	}
 
@@ -260,27 +333,99 @@ DES_State *handle_entry_unlocked_state() {
 
 
 DES_State *handle_exit_closed_state() {
-	DES_State *next_state;
+	DES_State *next_state = &exit_closed_state;
+
+	switch (device_request.eventType) {
+	case EVENT_GLL:
+	case EVENT_GRL: {
+		Door *targetDoor = (device_request.eventType == EVENT_GLL) ? &leftDoor : &rightDoor;
+		if (targetDoor->isEntrance) {
+			updateDisplay("Error: a different exit door is waiting to be opened! Maintaining 'EXIT_UNLOCKED' state.");
+		} else {
+			targetDoor->isUnlocked = 0;
+			updateDisplay("Exit door secured and cycle complete - %s\n", getOutputMessage(STATE_IDLE));
+			reinitialize();
+			next_state = &idle_state;
+		}
+		break;
+	}
+	default:
+		handleInvalidInputRequest();
+		break;
+	}
+
 	return next_state;
 }
 
 DES_State *handle_exit_opened_state() {
-	DES_State *next_state;
-	return next_state;
-}
+	DES_State *next_state = &exit_opened_state;
 
-DES_State *handle_exit_secured_state() {
-	DES_State *next_state;
+	switch (device_request.eventType) {
+	case EVENT_LC:
+	case EVENT_RC: {
+		Door *targetDoor = (device_request.eventType == EVENT_LC) ? &leftDoor : &rightDoor;
+		if (targetDoor->isEntrance) {
+			updateDisplay("Error: a different exit door is waiting to be closed! Maintaining 'EXIT_UNLOCKED' state.");
+		} else {
+			targetDoor->isOpened = 0;
+			updateDisplay("%s\n", getOutputMessage(STATE_EXIT_CLOSED));
+			next_state = &exit_closed_state;
+		}
+		break;
+	}
+	default:
+		handleInvalidInputRequest();
+		break;
+	}
+
 	return next_state;
 }
 
 DES_State *handle_exit_unlocked_state() {
-	DES_State *next_state;
+	DES_State *next_state = &exit_unlocked_state;
+
+	switch (device_request.eventType) {
+	case EVENT_LO:
+	case EVENT_RO: {
+		Door *targetDoor = (device_request.eventType == EVENT_LO) ? &leftDoor : &rightDoor;
+		if (targetDoor->isEntrance) {
+			updateDisplay("Error: a different exit door is waiting to be opened! Maintaining 'EXIT_UNLOCKED' state.");
+		} else {
+			targetDoor->isOpened = 1;
+			updateDisplay("%s\n", getOutputMessage(STATE_EXIT_OPENED));
+			next_state = &exit_opened_state;
+		}
+		break;
+	}
+	default:
+		handleInvalidInputRequest();
+		break;
+	}
+
 	return next_state;
 }
 
 DES_State *handle_weight_measured_state() {
-	DES_State *next_state;
+	DES_State *next_state = &weight_measured_state;
+
+	switch (device_request.eventType) {
+	case EVENT_LC:
+	case EVENT_RC: {
+		Door *targetDoor = (device_request.eventType == EVENT_LC) ? &leftDoor : &rightDoor;
+		if (targetDoor->isEntrance) {
+			targetDoor->isOpened = 0;
+			updateDisplay("%s\n", getOutputMessage(STATE_ENTRY_CLOSED));
+			next_state = &entry_closed_state;
+		} else {
+			updateDisplay("Error: a different door is currently opened! Maintaining 'WEIGHT_MEASURED' state.");
+		}
+		break;
+	}
+	default:
+		handleInvalidInputRequest();
+		break;
+	}
+
 	return next_state;
 }
 
@@ -528,15 +673,18 @@ int main(void) {
     // Start the FSM in the IDLE state
     currentState = &initial_state;
     while (1) {
-    	updateStateMachine(); // Performs an update on the state machine.
-//    	updateDisplay(); // Sends a message containing global buffer's contents to the display.
+    	// Perform an update on the state machine.
+    	if (updateStateMachine() == STATE_FINAL) {
+    	    sleep(1);
+    	    return EXIT_SUCCESS;
+    	}
+
+//    	printf("R.isEntrance = %d , L.isEntrance = %d \n", rightDoor.isEntrance, leftDoor.isEntrance);
     	printf("\n");
     	receiveMessage(); // Listens for requests from external devices.
     	printf("des_controller: Message received: {%s}\n", getInputCode(device_request.eventType));
     }
 
-    // Cleanup (never reached in this infinite loop)
-    ChannelDestroy(chid);
     return EXIT_SUCCESS;
 }
 

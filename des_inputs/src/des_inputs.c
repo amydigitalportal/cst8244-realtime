@@ -179,12 +179,10 @@ int main(int argc, char *argv[]) {
         // Compare and process commands
         EventType eventType = getEventType(inputBuffer); // Convert string to upper case.
 
-        // Handle 'exit' case.
-        if (eventType == EVENT_EXIT) {
-        	break;
-        }
-
         processEventType(eventType);
+
+        if (eventType == EVENT_EXIT)
+        	break;
 	}
 
 

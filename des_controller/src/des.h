@@ -43,7 +43,7 @@ typedef enum {
 	, EVENT_GLL // Guard lock L_DOOR
 	, EVENT_GLU	// Guard unlock L_DOOR
 	, EVENT_TXT // Process Text Message
-	, EVENT_PNC	// Panic! Release all locks and open doors.
+	, EVENT_PNC	// Panic! Release all locks and open doors. (too bad we're not doing anything about it XD)
 	, EVENT_EXIT // Begin system shutdown.
 	, EVENT_UNKNOWN // Unrecognized event
 } EventType;
@@ -92,12 +92,11 @@ typedef enum {
 	, STATE_EXIT_OPENED
 	, STATE_EXIT_CLOSED
 	, STATE_EXIT_UNLOCKED
-	, STATE_EXIT_SECURED
 	, STATE_WEIGHT_MEASURED
 	, STATE_CLEANUP
 	, STATE_FINAL
 } DES_StateID;
-#define NUM_DES_STATES 12
+#define NUM_DES_STATES 11
 
 typedef struct DES_State {
 	DES_StateID id;
@@ -120,10 +119,9 @@ const char *getOutputMessage(DES_StateID enteredState) {
 	case STATE_EXIT_OPENED:		return "Exit door opened ... Transitioning to 'EXIT_OPENED' state!";
 	case STATE_EXIT_CLOSED:		return "Exit door closed ... Transitioning to 'EXIT_CLOSED' state!";
 	case STATE_EXIT_UNLOCKED:	return "Exit latch released ... Transitioning to 'EXIT_UNLOCKED' state!";
-	case STATE_EXIT_SECURED:	return "Exit latch secured ... Transitioning to 'EXIT_SECURED' state!";
 	case STATE_CLEANUP:			return "System cleaning up ... Transitioning to 'CLEANUP' state!";
 	case STATE_WEIGHT_MEASURED:	return "Weight scale measured ... Transitioning to 'WEIGHT_MEASURED' state!";
-	case STATE_FINAL:			return "System finalizing ... Transitioning to 'FINAL' state!";
+	case STATE_FINAL:			return "System finalized ('FINAL' state)! Shutting down.";
 	default:
 		return "UNKNOWN_OUTPUT";
 	}
