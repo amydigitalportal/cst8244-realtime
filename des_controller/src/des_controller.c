@@ -6,8 +6,8 @@
 #include <unistd.h>
 
 
-int chid = -1; // QNX Server Channel ID
-int display_pid = -1; // DES Display PID for IPC
+name_attach_t* attach;
+int coid;
 
 DES_Message device_request;
 DES_State *currentState;
@@ -33,22 +33,29 @@ DES_State *handle_cleanup_state(void);
 DES_State *handle_weight_measured_state(void);
 
 // Define DES States
-DES_State initial_state 			= { STATE_INITIAL, 			handle_initial_state 			};
-DES_State final_state 				= { STATE_FINAL, 			handle_final_state 				};
-DES_State idle_state 				= { STATE_IDLE, 			handle_idle_state 				};
-DES_State access_granted_state 		= { STATE_ACCESS_GRANTED, 	handle_access_granted_state 	};
-DES_State entry_opened_state 		= { STATE_ENTRY_OPENED, 	handle_entry_opened_state 		};
-DES_State entry_closed_state 		= { STATE_ENTRY_CLOSED, 	handle_entry_closed_state 		};
-DES_State entry_unlocked_state 		= { STATE_ENTRY_UNLOCKED, 	handle_entry_unlocked_state 	};
-DES_State entry_secured_state 		= { STATE_ENTRY_SECURED, 	handle_entry_secured_state 		};
-DES_State exit_opened_state 		= { STATE_EXIT_OPENED, 		handle_exit_opened_state 		};
-DES_State exit_closed_state 		= { STATE_EXIT_CLOSED, 		handle_exit_closed_state 		};
-DES_State exit_unlocked_state 		= { STATE_EXIT_UNLOCKED, 	handle_exit_unlocked_state 		};
-DES_State cleanup_state 			= { STATE_CLEANUP, 			handle_cleanup_state 			};
-DES_State weight_measured_state 	= { STATE_WEIGHT_MEASURED, 	handle_weight_measured_state 	};
+DES_State initial_state 			= { STATE_INITIAL, 			"INITIAL",			handle_initial_state 			};
+DES_State final_state 				= { STATE_FINAL, 			"FINAL",			handle_final_state 				};
+DES_State idle_state 				= { STATE_IDLE, 			"IDLE",				handle_idle_state 				};
+DES_State access_granted_state 		= { STATE_ACCESS_GRANTED, 	"ACCESS_GRANTED",	handle_access_granted_state 	};
+DES_State entry_opened_state 		= { STATE_ENTRY_OPENED, 	"ENTRY_OPENED",		handle_entry_opened_state 		};
+DES_State entry_closed_state 		= { STATE_ENTRY_CLOSED, 	"ENTRY_CLOSED",		handle_entry_closed_state 		};
+DES_State entry_unlocked_state 		= { STATE_ENTRY_UNLOCKED, 	"ENTRY_UNLOCKED",	handle_entry_unlocked_state 	};
+DES_State entry_secured_state 		= { STATE_ENTRY_SECURED, 	"ENTRY_SECURED",	handle_entry_secured_state 		};
+DES_State exit_opened_state 		= { STATE_EXIT_OPENED, 		"EXIT_OPENED",		handle_exit_opened_state 		};
+DES_State exit_closed_state 		= { STATE_EXIT_CLOSED, 		"EXIT_CLOSED",		handle_exit_closed_state 		};
+DES_State exit_unlocked_state 		= { STATE_EXIT_UNLOCKED, 	"EXIT_UNLOCKED",	handle_exit_unlocked_state 		};
+DES_State cleanup_state 			= { STATE_CLEANUP, 			"CLEANUP",			handle_cleanup_state 			};
+DES_State weight_measured_state 	= { STATE_WEIGHT_MEASURED, 	"WEIGHT_MEASURED",	handle_weight_measured_state 	};
 
 
 void updateDisplay(const char *format, ...) {
+
+	// Safeguard for invalid connection
+    if (coid < 0) {
+        printf("des_controller: no connection to des_display exists. Ignoring update to display...\n");
+        return;
+    }
+
     va_list args;
     va_start(args, format);
 
@@ -58,68 +65,87 @@ void updateDisplay(const char *format, ...) {
     va_end(args);
 
     write_to_buffer("%s", temp_buffer);
-//    printf("%s\n", pGlobalBuffer); // Immediately print the buffer
 
-
-	// Send IPC message
-
-    int coid = ConnectAttach(0, display_pid, 1, _NTO_SIDE_CHANNEL, 0);
-    if (coid == -1) {
-        perror("ConnectAttach to des_display failed");
-        return;
-    }
+    // Process the buffer contents for sending out a message to the display.
 
 	DisplayMessage msg;
+	msg.type = DISPLAY;
 	strncpy(msg.payload, pGlobalBuffer, BUFFER_SIZE - 1);
 	msg.payload[BUFFER_SIZE - 1] = '\0'; // Ensure null termination
 
 	// Send message to the display
 	if (MsgSend(coid, &msg, sizeof(msg), NULL, 0) == -1) {
-		perror("Controller: MsgSend failed");
+		perror("des_controller: MsgSend failed");
 	}
+}
 
-    ConnectDetach(coid);
+void broadcastShutdown() {
+    if (coid < 0) {
+        printf("des_controller: no connection to des_display. Ignoring relay to shutdown...\n");
+        return;
+    }
+
+    write_to_buffer("%s", "des_controller: Relaying shutdown order!");
+
+	DisplayMessage msg;
+	msg.type = SHUTDOWN;
+	strncpy(msg.payload, pGlobalBuffer, BUFFER_SIZE - 1);
+	msg.payload[BUFFER_SIZE - 1] = '\0'; // Ensure null termination
+
+	// Send message to the display
+	coid = name_open(NAMESPACE_DISPLAY, 0);
+	if (MsgSend(coid, &msg, sizeof(msg), NULL, 0) == -1) {
+		perror("des_controller: MsgSend failed");
+	}
 }
 
 // Blocking function to receive a DES_Message from des_inputs.
 void receiveMessage() {
-    int rcvid = MsgReceive(chid, &device_request, sizeof(device_request), NULL);
+    int rcvid = MsgReceive(attach->chid, &device_request, sizeof(device_request), NULL);
     if (rcvid == -1) {
-        perror("MsgReceive failed");
-    } else {
-    	const char* inputCode = getInputCode(device_request.eventType);
-    	printf("\n[des_controller] received input: ");
-    	if (device_request.data >= 0) {
-        	printf("{%s, '%d'}", inputCode, device_request.data);
-    	} else {
-        	printf("{%s}", inputCode);
-    	}
-
-        // Acknowledge receipt.
-        MsgReply(rcvid, EOK, NULL, 0);
+        perror("des_controller: MsgReceive failed!");
+        return;
     }
+
+	const char* inputCode = getInputCode(device_request.eventType);
+	printf("\n[des_controller] received input: ");
+
+	if (device_request.data >= 0) {
+		printf("{%s, '%d'}", inputCode, device_request.data);
+	} else {
+		printf("{%s}", inputCode);
+	}
+
+	// Acknowledge receipt.
+	if (MsgReply(rcvid, EOK, NULL, 0) == -1) {
+		perror("des_controller: MsgReply failed!");
+	}
 }
 
 DES_StateID updateStateMachine() {
-	if (device_request.eventType < 0) {
+	EventType eventType = device_request.eventType;
+	if (eventType < 0) {
 		return -1;
 	}
 
 	// perform the state's function and retrieve next state
-	DES_State *nextState = currentState->handler();
-
-	// Capture the next state.
-	currentState = nextState;
-
-	// Handle CLEANUP phase.
-	if (currentState->id == STATE_CLEANUP) {
+	DES_State *nextState;
+	if (eventType == EVENT_EXIT) {
 		updateDisplay("%s\n", getOutputMessage(STATE_CLEANUP));
 
-	    ChannelDestroy(chid);
+		// Proceed to cleanup if message contains "EXIT" event.
+		nextState = cleanup_state.handler();
+	} else {
+		nextState = currentState->handler();
+	}
 
-	    // Force Transition to Final State
-	    currentState = &final_state;
-	    updateDisplay("%s\n", getOutputMessage(STATE_FINAL));
+	// Update the current state.
+	currentState = nextState;
+
+	// Handle finalization.
+	if (currentState->id == STATE_FINAL) {
+		// Perform "final" state actions.
+		final_state.handler();
 	    return STATE_FINAL;
 	}
 
@@ -155,8 +181,7 @@ int validateCredentials(int personId, Door *entranceDoor) {
 }
 
 void handleInvalidInputRequest() {
-	updateDisplay("Error: Unrecognized input '%s'! Maintaining 'ACCESS_GRANTED' state.", getInputCode(device_request.eventType));
-//	printf("ERROR! Received invalid request type: '%s'.\n", getInputCode(device_request.eventType));
+	updateDisplay("Error: Unrecognized input '%s' from current state (%s)! State remaining unchanged.\n", getInputCode(device_request.eventType), currentState->name);
 }
 
 //–––––– STATE HANDLER FUNCTIONS ––––––
@@ -183,6 +208,7 @@ DES_State *handle_idle_state() {
 	case EVENT_EXIT:
 		updateDisplay("%s ... ", getOutputMessage(STATE_CLEANUP));
 		return &cleanup_state;
+
 	// perform authentication
 	case EVENT_LS: 	authSuccess = validateCredentials(person_id, &leftDoor); break;
 	case EVENT_RS:	authSuccess = validateCredentials(person_id, &rightDoor); break;
@@ -448,49 +474,48 @@ DES_State *handle_weight_measured_state() {
 }
 
 DES_State *handle_cleanup_state() {
-	return &idle_state;
+
+	// Signal to listeners (des_display) to shutdown gracefully.
+    broadcastShutdown(); // waits for response (MsgSend is blocking)
+
+    // Teardown
+    name_close(coid);
+    coid = -1;
+    name_detach(attach, 0);
+
+	return &final_state;
 }
 
 DES_State *handle_final_state() {
+	printf("\n\ndes_controller: Shutting down...\n\n");
+    sleep(1);
 	return &final_state;
 }
 
 
 //–––––– MAIN FSM LOOP ––––––
-int main(int argc, char *argv[]) {
-
-	// Validate number of command arguments.
-	if (argc != 2) {
-		fprintf(stderr, "Usage: %s <display-pid>",
-				argv[0]);
+int main() {
+	// Perform attachment to namespace for IPC
+	attach = name_attach(NULL, NAMESPACE_CONTROLLER, 0);
+	if (attach == NULL) {
+		perror("des_controller: name_attach failed. Process terminating...");
 		exit(EXIT_FAILURE);
 	}
+    printf("des_controller: Listening via namespace '%s'\n", NAMESPACE_CONTROLLER);
 
-	// Parse command-line args.
-	display_pid = atoi(argv[1]); // Used for outgoing IPC in updateDisplay()
 
+    coid = name_open(NAMESPACE_DISPLAY, 0);
 
 	// -- BEGIN Controller Server Logic.
 
 	device_request.eventType = -1;
 	device_request.data = -1;
 
-    // Create a QNX channel for IPC
-    chid = ChannelCreate(0);
-    if (chid == -1) {
-        perror("ChannelCreate failed");
-        return EXIT_FAILURE;
-    }
-
-    printf("des_controller PID: %d, receiving inputs on channel %d\n", getpid(), chid);
-
-
     // Start the FSM in the IDLE state
     currentState = &initial_state;
     while (1) {
     	// Perform an update on the state machine.
     	if (updateStateMachine() == STATE_FINAL) {
-    	    sleep(1);
     	    return EXIT_SUCCESS;
     	}
 

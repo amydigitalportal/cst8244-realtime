@@ -12,12 +12,18 @@
 #include <stdlib.h>
 #include <unistd.h>        // For getpid()
 #include <sys/neutrino.h>  // For QNX messaging
+#include <sys/iofunc.h>
+#include <sys/dispatch.h>
 #include <errno.h>         // For error handling
 #include <string.h>        // For memset
 #include "buffer_manager.h"
 
 #define VALID_PERSON_ID_MIN 10000
 #define VALID_PERSON_ID_MAX 99999
+
+#define NAMESPACE_INPUTS "des/inputs"
+#define NAMESPACE_CONTROLLER "des/controller"
+#define NAMESPACE_DISPLAY "des/display"
 
 /**
  * Data structure holding state for a DES door.
@@ -58,32 +64,17 @@ typedef struct {
     int data;
 } DES_Message;
 
+typedef enum {
+	DISPLAY,
+	SHUTDOWN
+} MessageType;
+
 typedef struct {
+	MessageType type;
 	char payload[BUFFER_SIZE];
 } DisplayMessage;
 
-/**
- * Function for retrieving an input code for a specific event type,
- * representing an input signal from an external device.
- */
-const char *getInputCode(EventType eventType) {
-	switch (eventType) {
-	case EVENT_LS:		return "LS";
-	case EVENT_GLU:		return "GLU";
-	case EVENT_GLL:		return "GLL";
-	case EVENT_LO:		return "LO";
-	case EVENT_LC:		return "RO";
-	case EVENT_RS:		return "RS";
-	case EVENT_GRU:		return "GRU";
-	case EVENT_GRL:		return "GRL";
-	case EVENT_RO:		return "RO";
-	case EVENT_RC:		return "RC";
-	case EVENT_WS:		return "WS";
-	case EVENT_EXIT:	return "EXIT";
-	default:
-		return "UNKNOWN_INPUT";
-	}
-}
+const char *getInputCode(EventType eventType);
 
 // Define system state IDs
 typedef enum {
@@ -105,31 +96,10 @@ typedef enum {
 
 typedef struct DES_State {
 	DES_StateID id;
+	const char* name;
     struct DES_State *(*handler)(void);
 } DES_State;
 
-/**
- * Function for retrieving an output message for when a state is being entered,
- * representing a status update.
- */
-const char *getOutputMessage(DES_StateID enteredState) {
-	switch (enteredState) {
-	case STATE_INITIAL:			return "System initializing ...";
-	case STATE_IDLE:			return "... Transitioning to 'IDLE' state!";
-	case STATE_ACCESS_GRANTED:	return "System granting access ... Transitioning to 'ACCESS_GRANTED' state!";
-	case STATE_ENTRY_OPENED:	return "Entry door opened ... Transitioning to 'ENTRY_OPENED' state!";
-	case STATE_ENTRY_CLOSED:	return "Entry door closed ... Transitioning to 'ENTRY_CLOSED' state!";
-	case STATE_ENTRY_UNLOCKED:	return "Entry latch released ... Transitioning to 'ENTRY_UNLOCKED' state!";
-	case STATE_ENTRY_SECURED:	return "Entry latch secured ... Transitioning to 'ENTRY_LOCKED' state!";
-	case STATE_EXIT_OPENED:		return "Exit door opened ... Transitioning to 'EXIT_OPENED' state!";
-	case STATE_EXIT_CLOSED:		return "Exit door closed ... Transitioning to 'EXIT_CLOSED' state!";
-	case STATE_EXIT_UNLOCKED:	return "Exit latch released ... Transitioning to 'EXIT_UNLOCKED' state!";
-	case STATE_CLEANUP:			return "System cleaning up ... Transitioning to 'CLEANUP' state!";
-	case STATE_WEIGHT_MEASURED:	return "Weight scale measured ... Transitioning to 'WEIGHT_MEASURED' state!";
-	case STATE_FINAL:			return "System finalized ('FINAL' state)! Shutting down.";
-	default:
-		return "UNKNOWN_OUTPUT";
-	}
-}
+const char *getOutputMessage(DES_StateID enteredState);
 
 #endif // DES_H
