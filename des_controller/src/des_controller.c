@@ -130,27 +130,25 @@ void receiveMessage() {
 }
 
 DES_StateID updateStateMachine() {
-	if (device_request.eventType < 0) {
+	EventType eventType = device_request.eventType;
+	if (eventType < 0) {
 		return -1;
 	}
 
 	// perform the state's function and retrieve next state
-	DES_State *nextState = currentState->handler();
+	DES_State *nextState = (eventType == EVENT_EXIT) ?
+			// Proceed to cleanup if message contains "EXIT" event.
+			cleanup_state.handler() : currentState->handler();
 
-	// Capture the next state.
+	// Update the current state.
 	currentState = nextState;
 
 	// Handle CLEANUP phase.
 	if (currentState->id == STATE_CLEANUP) {
 		updateDisplay("%s\n", getOutputMessage(STATE_CLEANUP));
 
-	    name_close(coid);
-	    name_detach(attach, 0);
-
-	    // Force Transition to Final State
-	    currentState = &final_state;
-	    updateDisplay("%s\n", getOutputMessage(STATE_FINAL));
-	    broadcastShutdown();
+		// Perform "final" state actions.
+		final_state.handler();
 	    return STATE_FINAL;
 	}
 
@@ -479,10 +477,16 @@ DES_State *handle_weight_measured_state() {
 }
 
 DES_State *handle_cleanup_state() {
-	return &idle_state;
+    broadcastShutdown();
+
+    name_close(coid);
+    name_detach(attach, 0);
+
+	return &final_state;
 }
 
 DES_State *handle_final_state() {
+    updateDisplay("%s\n", getOutputMessage(STATE_FINAL));
 	return &final_state;
 }
 
@@ -510,6 +514,7 @@ int main() {
     while (1) {
     	// Perform an update on the state machine.
     	if (updateStateMachine() == STATE_FINAL) {
+        	printf("des_controller: Shutting down...\n\n");
     	    sleep(1);
     	    return EXIT_SUCCESS;
     	}

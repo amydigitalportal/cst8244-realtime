@@ -47,7 +47,7 @@ EventType getEventType(const char *input) {
 void sendMessage() {
 
     if (device_request.eventType == EVENT_EXIT) {
-    	printf("Exiting...\n");
+    	printf("des_inputs: Exiting process...\n");
     }
 
 //    printf("[DEBUG] sizeof(DES_Message) = %zu\n", sizeof(DES_Message));
@@ -96,7 +96,7 @@ int main() {
 
 	coid = name_open(NAMESPACE_CONTROLLER, 0);
     if (coid == -1) {
-        perror("des_inputs: name_open has invalid connection ID\n");
+        perror("des_inputs: name_open failed to connect to controller. Process terminating...\n\n");
         exit(EXIT_FAILURE);
     }
 

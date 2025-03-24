@@ -36,7 +36,7 @@ int main(void) {
 			MsgReply(rcvid, 0, NULL, 0); // No replies.
 			break;
 		case SHUTDOWN:
-			printf("Received SHUTDOWN command!");
+			printf("Received SHUTDOWN command!\n\n");
 			MsgReply(rcvid, 0, NULL, 0);
 
 			// Proceed to finalize.
@@ -48,7 +48,8 @@ int main(void) {
     }
 
 shutdown:
-	printf("des_display: cleaning up and shutting down... Goodbye!");
+	printf("des_display: cleaning up and shutting down... Goodbye!\n\n");
+	sleep(1);
 	name_detach(attach, 0);
 	return EXIT_SUCCESS;
 }
