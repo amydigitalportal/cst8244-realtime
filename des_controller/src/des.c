@@ -47,7 +47,7 @@ const char *getOutputMessage(DES_StateID enteredState) {
 	case STATE_EXIT_OPENED:		return "Exit door opened ... Transitioning to 'EXIT_OPENED' state!";
 	case STATE_EXIT_CLOSED:		return "Exit door closed ... Transitioning to 'EXIT_CLOSED' state!";
 	case STATE_EXIT_UNLOCKED:	return "Exit latch released ... Transitioning to 'EXIT_UNLOCKED' state!";
-	case STATE_CLEANUP:			return "System cleaning up ... Transitioning to 'CLEANUP' state!";
+	case STATE_CLEANUP:			return "System cleanup requested ... Transitioning to 'CLEANUP' state!";
 	case STATE_WEIGHT_MEASURED:	return "Weight scale measured ... Transitioning to 'WEIGHT_MEASURED' state!";
 	case STATE_FINAL:			return "System finalized ('FINAL' state)! Shutting down.";
 	default:

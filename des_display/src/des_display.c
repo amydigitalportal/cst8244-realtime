@@ -2,14 +2,8 @@
 
 
 int main(void) {
-	// Print the Display's process ID
-//    printf("des_display: running with process id %d\n\n", getpid());
-
-
-	name_attach_t *attach;
-
-	// Attach to namespace
-	attach = name_attach(NULL, NAMESPACE_DISPLAY, 0);
+	// Attach process to the 'Display' namespace
+	name_attach_t *attach = name_attach(NULL, NAMESPACE_DISPLAY, 0);
 	if (attach == NULL) {
 		perror("name_attach failed!");
 		exit(EXIT_FAILURE);
@@ -19,6 +13,8 @@ int main(void) {
 
 	DisplayMessage displayMessage;
     int rcvid;
+
+    // -- Begin program loop!
 
     while (1) {
 
@@ -30,17 +26,20 @@ int main(void) {
 		}
 
 		switch (displayMessage.type) {
+
 		case DISPLAY:
 			printf("%s\n", displayMessage.payload);
 			// Acknowledge receipt.
 			MsgReply(rcvid, 0, NULL, 0); // No replies.
 			break;
+
 		case SHUTDOWN:
-			printf("Received SHUTDOWN command!\n\n");
+			printf("\nReceived SHUTDOWN command!\n\n");
 			MsgReply(rcvid, 0, NULL, 0);
 
 			// Proceed to finalize.
 			goto shutdown;
+
 		default:
 			perror("des_display: Unknown message type! Looping back to listening for messages...");
 			continue;

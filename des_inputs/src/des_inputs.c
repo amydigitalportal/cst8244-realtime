@@ -50,8 +50,6 @@ void sendMessage() {
     	printf("des_inputs: Exiting process...\n");
     }
 
-//    printf("[DEBUG] sizeof(DES_Message) = %zu\n", sizeof(DES_Message));
-
     // Send message to the controller with request data.
     int send_response = MsgSend(coid, &device_request, sizeof(device_request), NULL, 0 );
     if (send_response == -1) {
@@ -94,6 +92,7 @@ void processEventType(EventType eventType) {
 
 int main() {
 
+	// Open connection to the controller namespace.
 	coid = name_open(NAMESPACE_CONTROLLER, 0);
     if (coid == -1) {
         perror("des_inputs: name_open failed to connect to controller. Process terminating...\n\n");
@@ -119,7 +118,7 @@ int main() {
         	break;
 	}
 
-
+	// Cleanup namespace connection.
     name_close(coid);
 
 	return EXIT_SUCCESS;

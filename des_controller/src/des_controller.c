@@ -49,6 +49,13 @@ DES_State weight_measured_state 	= { STATE_WEIGHT_MEASURED, 	"WEIGHT_MEASURED",	
 
 
 void updateDisplay(const char *format, ...) {
+
+	// Safeguard for invalid connection
+    if (coid < 0) {
+        printf("des_controller: no connection to des_display exists. Ignoring update to display...\n");
+        return;
+    }
+
     va_list args;
     va_start(args, format);
 
@@ -58,15 +65,8 @@ void updateDisplay(const char *format, ...) {
     va_end(args);
 
     write_to_buffer("%s", temp_buffer);
-//    printf("%s\n", pGlobalBuffer); // Immediately print the buffer
 
-
-	// Send IPC message
-//    coid = name_open(NAMESPACE_DISPLAY, 0);
-    if (coid == -1) {
-        printf("des_controller: name_open failed to connect to des_display. Foregoing send.\n");
-        return;
-    }
+    // Process the buffer contents for sending out a message to the display.
 
 	DisplayMessage msg;
 	msg.type = DISPLAY;
@@ -75,20 +75,17 @@ void updateDisplay(const char *format, ...) {
 
 	// Send message to the display
 	if (MsgSend(coid, &msg, sizeof(msg), NULL, 0) == -1) {
-		perror("Controller: MsgSend failed");
+		perror("des_controller: MsgSend failed");
 	}
-
-//    name_close(coid);
 }
 
 void broadcastShutdown() {
-    write_to_buffer("%s", "des_controller: Relaying shutdown order!");
-
-//    int coid = name_open(NAMESPACE_DISPLAY, 0);
-    if (coid == -1) {
-        printf("des_controller: name_open failed to connect to des_display. Foregoing send.\n");
+    if (coid < 0) {
+        printf("des_controller: no connection to des_display. Ignoring relay to shutdown...\n");
         return;
     }
+
+    write_to_buffer("%s", "des_controller: Relaying shutdown order!");
 
 	DisplayMessage msg;
 	msg.type = SHUTDOWN;
@@ -96,18 +93,14 @@ void broadcastShutdown() {
 	msg.payload[BUFFER_SIZE - 1] = '\0'; // Ensure null termination
 
 	// Send message to the display
+	coid = name_open(NAMESPACE_DISPLAY, 0);
 	if (MsgSend(coid, &msg, sizeof(msg), NULL, 0) == -1) {
 		perror("des_controller: MsgSend failed");
 	}
-
-//	name_close(coid);
 }
 
 // Blocking function to receive a DES_Message from des_inputs.
 void receiveMessage() {
-//	char raw_buffer[sizeof(DES_Message)];
-//	printf("[DEBUG] sizeof(DES_Message) = %zu\n", sizeof(DES_Message));
-//	int rcvid = MsgReceive(attach->chid, raw_buffer, sizeof(raw_buffer), NULL);
     int rcvid = MsgReceive(attach->chid, &device_request, sizeof(device_request), NULL);
     if (rcvid == -1) {
         perror("des_controller: MsgReceive failed!");
@@ -136,17 +129,21 @@ DES_StateID updateStateMachine() {
 	}
 
 	// perform the state's function and retrieve next state
-	DES_State *nextState = (eventType == EVENT_EXIT) ?
-			// Proceed to cleanup if message contains "EXIT" event.
-			cleanup_state.handler() : currentState->handler();
+	DES_State *nextState;
+	if (eventType == EVENT_EXIT) {
+		updateDisplay("%s\n", getOutputMessage(STATE_CLEANUP));
+
+		// Proceed to cleanup if message contains "EXIT" event.
+		nextState = cleanup_state.handler();
+	} else {
+		nextState = currentState->handler();
+	}
 
 	// Update the current state.
 	currentState = nextState;
 
-	// Handle CLEANUP phase.
-	if (currentState->id == STATE_CLEANUP) {
-		updateDisplay("%s\n", getOutputMessage(STATE_CLEANUP));
-
+	// Handle finalization.
+	if (currentState->id == STATE_FINAL) {
 		// Perform "final" state actions.
 		final_state.handler();
 	    return STATE_FINAL;
@@ -185,7 +182,6 @@ int validateCredentials(int personId, Door *entranceDoor) {
 
 void handleInvalidInputRequest() {
 	updateDisplay("Error: Unrecognized input '%s' from current state (%s)! State remaining unchanged.\n", getInputCode(device_request.eventType), currentState->name);
-//	printf("ERROR! Received invalid request type: '%s'.\n", getInputCode(device_request.eventType));
 }
 
 //–––––– STATE HANDLER FUNCTIONS ––––––
@@ -212,6 +208,7 @@ DES_State *handle_idle_state() {
 	case EVENT_EXIT:
 		updateDisplay("%s ... ", getOutputMessage(STATE_CLEANUP));
 		return &cleanup_state;
+
 	// perform authentication
 	case EVENT_LS: 	authSuccess = validateCredentials(person_id, &leftDoor); break;
 	case EVENT_RS:	authSuccess = validateCredentials(person_id, &rightDoor); break;
@@ -477,16 +474,21 @@ DES_State *handle_weight_measured_state() {
 }
 
 DES_State *handle_cleanup_state() {
-    broadcastShutdown();
 
+	// Signal to listeners (des_display) to shutdown gracefully.
+    broadcastShutdown(); // waits for response (MsgSend is blocking)
+
+    // Teardown
     name_close(coid);
+    coid = -1;
     name_detach(attach, 0);
 
 	return &final_state;
 }
 
 DES_State *handle_final_state() {
-    updateDisplay("%s\n", getOutputMessage(STATE_FINAL));
+	printf("\n\ndes_controller: Shutting down...\n\n");
+    sleep(1);
 	return &final_state;
 }
 
@@ -514,8 +516,6 @@ int main() {
     while (1) {
     	// Perform an update on the state machine.
     	if (updateStateMachine() == STATE_FINAL) {
-        	printf("des_controller: Shutting down...\n\n");
-    	    sleep(1);
     	    return EXIT_SUCCESS;
     	}
 
