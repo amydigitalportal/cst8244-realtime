@@ -18,6 +18,7 @@ const EventLookup eventTable[] = {
 
 
 
+name_attach_t* attach;
 int coid;
 DES_Message device_request;
 
@@ -44,23 +45,18 @@ EventType getEventType(const char *input) {
 
 // Blocking function to send a DES_Message to the controller.
 void sendMessage() {
-    if (coid == -1) {
-        fprintf(stderr, "Invalid connection ID\n");
-        return;
+
+    if (device_request.eventType == EVENT_EXIT) {
+    	printf("Exiting...\n");
     }
 
-    // Send message to the controller with request data.
-    int send_response = MsgSend(
-        coid,
-        &device_request, sizeof(device_request),
-        NULL, 0 // No need to receive a response
-    );
+//    printf("[DEBUG] sizeof(DES_Message) = %zu\n", sizeof(DES_Message));
 
+    // Send message to the controller with request data.
+    int send_response = MsgSend(coid, &device_request, sizeof(device_request), NULL, 0 );
     if (send_response == -1) {
-        perror("MsgSend failed");
-        if (coid != -1) {
-            ConnectDetach(coid); // Safely detach only if valid
-        }
+        perror("des_inputs: MsgSend failed");
+		name_close(coid);
     }
 }
 
@@ -96,26 +92,13 @@ void processEventType(EventType eventType) {
     }
 }
 
-int main(int argc, char *argv[]) {
+int main() {
 
-	// Validate number of command arguments.
-	if (argc != 3) {
-		fprintf(stderr, "Usage: %s <controller-pid> <channel-id>",
-				argv[0]);
-		exit(EXIT_FAILURE);
-	}
-
-	// Parse command-line args.
-	pid_t controller_pid = atoi(argv[1]);
-	int chid = atoi(argv[2]); // QNX Target Channel ID
-
-
-	// Attempt to connect to the DES Controller process.
-	coid = ConnectAttach(0, controller_pid, chid, _NTO_SIDE_CHANNEL, 0);
-	if (coid == -1) {
-		perror("ConnectAttach failed");
-		return EXIT_FAILURE;
-	}
+	coid = name_open(NAMESPACE_CONTROLLER, 0);
+    if (coid == -1) {
+        perror("des_inputs: name_open has invalid connection ID\n");
+        exit(EXIT_FAILURE);
+    }
 
 	char inputBuffer[30];
 
@@ -136,7 +119,8 @@ int main(int argc, char *argv[]) {
         	break;
 	}
 
-	// Safely detach from connection.
-	ConnectDetach(coid);
+
+    name_close(coid);
+
 	return EXIT_SUCCESS;
 }
