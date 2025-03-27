@@ -7,16 +7,12 @@
 #include <sys/types.h>
 #include <errno.h>
 
-#define DEVICE_NAMESPACE "/dev/local/mydevice"
-#define PAYLOAD_SIZE 255
+#include "../../Lab7Common/lab7.h"
 
-char data[PAYLOAD_SIZE];
+char data[DEV_STATUS_BUFSIZE];
 int server_coid;
 
-typedef union {
-	struct _pulse pulse;
-	char msg[PAYLOAD_SIZE];
-} my_message_t;
+
 
 int io_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
 	int nb;
@@ -84,7 +80,7 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 
 int io_open(resmgr_context_t *ctp, io_open_t *msg, RESMGR_HANDLE_T *handle,
 		void *extra) {
-	if ((server_coid = name_open("mydevice", 0)) == -1) {
+	if ((server_coid = name_open(DEVICE_NAME, 0)) == -1) {
 		perror("name_open failed.");
 		return EXIT_FAILURE;
 	}
@@ -112,7 +108,7 @@ int main(int argc, char *argv[]) {
 
 	iofunc_attr_init(&ioattr, S_IFCHR | 0666, NULL, NULL);
 
-	if ((id = resmgr_attach(dpp, NULL, DEVICE_NAMESPACE, _FTYPE_ANY, 0,
+	if ((id = resmgr_attach(dpp, NULL, DEVICE_PATH, _FTYPE_ANY, 0,
 			&connect_funcs, &io_funcs, &ioattr)) == -1) {
 		fprintf(stderr, "%s:  Unable to attach name.\n", argv[0]);
 		return (EXIT_FAILURE);
