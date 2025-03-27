@@ -12,8 +12,6 @@
 char data[DEV_STATUS_BUFSIZE];
 int server_coid;
 
-
-
 int io_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
 	int nb;
 
@@ -60,7 +58,7 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 			if (small_integer >= 1 && small_integer <= 99) {
 				//FIXME :: replace getprio() with SchedGet()
 				MsgSendPulse(server_coid, SchedGet(0, 0, NULL),
-						_PULSE_CODE_MINAVAIL, small_integer);
+				_PULSE_CODE_MINAVAIL, small_integer);
 			} else {
 				printf("Integer is not between 1 and 99.\n");
 			}
@@ -114,7 +112,9 @@ int main(int argc, char *argv[]) {
 		return (EXIT_FAILURE);
 	}
 
-	printf("myDevice: path '%s' registered to resource manager! Ready for dispatch ...\n", DEVICE_PATH);
+	printf(
+			"myDevice: path '%s' registered to resource manager! Ready for dispatch ...\n",
+			DEVICE_PATH);
 
 	ctp = dispatch_context_alloc(dpp);
 	while (1) {
