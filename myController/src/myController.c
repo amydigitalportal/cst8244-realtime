@@ -20,6 +20,7 @@ int handle_device_status(const char *status, const char *value);
  * Helper function to perform general cleanup and a graceful shutdown when an error occurs.
  */
 void cleanExitFailure() {
+	printf("-- Cannot proceed due to error! Server program shutting down.\n");
 	name_detach(attach, 0);
 	exit(EXIT_FAILURE);
 }
@@ -28,6 +29,7 @@ void cleanExitFailure() {
  * Helper function to perfom general cleanup on succesful finish of server operation
  */
 void cleanExitSuccess() {
+	printf("-- Server program finished; shutting down. Goodbye!\n");
 	name_detach(attach, 0);
 	exit(EXIT_SUCCESS);
 }
@@ -47,13 +49,9 @@ int read_device_status(char *out_status, size_t status_size, char *out_value, si
 		return -1;
 	}
 
-	int numScannedStrings = fscanf(fd, "%s %s", out_status, out_value);
+	// Scan file descriptor for status and value strings
+	fscanf(fd, "%s %s", out_status, out_value);
 	fclose(fd);
-
-	if (numScannedStrings != 2) {
-		fprintf(stderr, "Failed to parse status and value from device! (received '%d' strings)\n", numScannedStrings);
-		return -1;
-	}
 
 	return 0;
 }
@@ -108,15 +106,12 @@ int main(void) {
 
 	// Read the status
 	if (read_device_status(status, sizeof(status), value, sizeof(value)) == 0) {
-		printf("Startup device check - ");
-
 		// check whether device is closed
 		if (handle_device_status(status, value)) {
 			// Device is already closed, so we can simply shutdown sevrer
 			cleanExitSuccess();
 		}
 	}
-
 
 	// -- BEGIN: Server loop
 	while (1) {

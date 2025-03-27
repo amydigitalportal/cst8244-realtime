@@ -114,6 +114,8 @@ int main(int argc, char *argv[]) {
 		return (EXIT_FAILURE);
 	}
 
+	printf("myDevice: path '%s' registered to resource manager! Ready for dispatch ...\n", DEVICE_PATH);
+
 	ctp = dispatch_context_alloc(dpp);
 	while (1) {
 		ctp = dispatch_block(ctp);
