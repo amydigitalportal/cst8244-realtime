@@ -1,125 +1,153 @@
 #include <stdlib.h>
 #include <stdio.h>
-#include <sys/iofunc.h>
-#include <sys/dispatch.h>
-#include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
+#include <signal.h>
+#include <time.h>
+#include <sys/dispatch.h>
 #include <sys/types.h>
 #include <errno.h>
 
-#include "../../Lab7Common/lab7.h"
+#include "../../a2_common/a2.h"
+
 
 char data[DEV_STATUS_BUFSIZE];
-int server_coid;
+my_message_t msg;
 
-int io_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
-	int nb;
+metronome_config_t current_config = {};
+metronome_config_t next_config = {};
+volatile bool next_config_pending = false;
 
-	nb = strlen(data);
+name_attach_t* attach;
 
-	//test to see if we have already sent the whole message.
-	if (ocb->offset == nb)
-		return 0;
+static const rhythm_pattern_t rhythm_table[] = {
+	{2, 4, 4,  {"|1", "&", "2", "&"}},
+	{3, 4, 6,  {"|1", "&", "2", "&", "3", "&"}},
+	{4, 4, 8,  {"|1", "&", "2", "&", "3", "&", "4", "&"}},
+	{5, 4, 10, {"|1", "&", "2", "&", "3", "&", "4", "-", "5", "-"}},
+	{3, 8, 6,  {"|1", "-", "2", "-", "3", "-"}},
+	{6, 8, 6,  {"|1", "&", "a", "2", "&", "a"}},
+	{9, 8, 9,  {"|1", "&", "a", "2", "&", "a", "3", "&", "a"}},
+	{12,8, 12, {"|1", "&", "a", "2", "&", "a", "3", "&", "a", "4", "&", "a"}}
+};
 
-	//We will return which ever is smaller the size of our data or the size of the buffer
-	nb = min(nb, msg->i.nbytes);
 
-	//Set the number of bytes we will return
-	_IO_SET_READ_NBYTES(ctp, nb);
 
-	//Copy data into reply buffer.
-	SETIOV(ctp->iov, data, nb);
 
-	//update offset into our data used to determine start position for next read.
-	ocb->offset += nb;
 
-	//If we are going to send any bytes update the access time for this resource.
-	if (nb > 0)
-		ocb->attr->flags |= IOFUNC_ATTR_ATIME;
 
-	return (_RESMGR_NPARTS(1));
+/**
+ * Helper function to perform general cleanup and a graceful shutdown when an error occurs.
+ */
+void cleanExitFailure() {
+	printf("-- Cannot proceed due to error! Metronome process shutting down.\n");
+	name_detach(attach, 0);
+	exit(EXIT_FAILURE);
 }
 
-int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
-	int nb = 0;
+/**
+ * Helper function to perfom general cleanup on succesful finish of server operation
+ */
+void cleanExitSuccess() {
+	printf("-- Metronome driver finished; shutting down. Goodbye!\n");
+	name_detach(attach, 0);
+	exit(EXIT_SUCCESS);
+}
 
-	if (msg->i.nbytes == ctp->info.msglen - (ctp->offset + sizeof(*msg))) {
-		/* have all the data */
-		char *buf;
-		char *alert_msg;
-		int i, small_integer;
-		buf = (char*) (msg + 1);
 
-		if (strstr(buf, "alert") != NULL) {
-			for (i = 0; i < 2; i++) {
-				alert_msg = strsep(&buf, " ");
-			}
-			small_integer = atoi(alert_msg);
-			if (small_integer >= 1 && small_integer <= 99) {
-				//FIXME :: replace getprio() with SchedGet()
-				MsgSendPulse(server_coid, SchedGet(0, 0, NULL),
-				_PULSE_CODE_MINAVAIL, small_integer);
-			} else {
-				printf("Integer is not between 1 and 99.\n");
-			}
-		} else {
-			strcpy(data, buf);
+/**
+ * Helper method for fetching the pattern matching the specified top and bottom time-sig values.
+ */
+const rhythm_pattern_t* get_rhythmPattern(int top, int bottom) {
+	// Iterable through table...
+	for (int i = 0; i < sizeof(rhythm_table)/sizeof(rhythm_table[0]); i++) {
+		// Check if inputs match the table entry
+		if (rhythm_table[i].top == top && rhythm_table[i].bottom == bottom) {
+			return &rhythm_table[i];
+		}
+	}
+
+	// No pattern matching args ...
+	return NULL;
+}
+
+void handle_message(my_message_t *msg) {
+	switch (msg->pulse.code) {
+//		// Print the small integer from the pulse
+//		printf("Small integer: %d\n", msg->pulse.value.sival_int);
+//
+//		// Open the device (at the device path)
+//		if (read_device_status(status, sizeof(status), value, sizeof(value)) == 0) {
+//			// Handle the device status
+//			if (handle_device_status(status, value)) {
+//				// device closed - ready to shutdown
+//				cleanExitSuccess();
+//			}
+//		}
+
+	case METRONOME_PULSE_CODE:
+		break;
+
+	case PAUSE_PULSE_CODE:
+		break;
+
+	case QUIT_PULSE_CODE:
+		break;
+
+	case SET_CONFIG_PULSE_CODE:
+		break;
+
+	default:
+		break;
+	}
+}
+
+
+
+int main(void) {
+
+	// -- PHASE I: create a named channel to receive pulses
+	attach = name_attach( NULL, DEVICE_NAME, 0 );
+
+	// Calculate the seconds-per-beat and nano seconds for the interval timer
+	long sec_per_beat, sec_per_measure, nanos = 0;
+	sec_per_beat = 60 / current_config.bpm;
+
+//	sec_per_measure =
+
+
+	// Create an interval timer to "drive" the metronome
+	struct sigevent event; // signal emitted on timer tick
+	timer_t timer_id;
+	struct itimerspec itime; // timer specifications
+
+
+	// Check whether a new config has been set
+	if (next_config_pending) {
+		// Update the current config
+		current_config = next_config;
+		next_config_pending = false; // reset the flag
+	}
+
+	// -- BEGIN: Server loop
+	bool is_process_looping = true;
+	while (is_process_looping) {
+
+		// Listen for a pulse
+		rcvid = MsgReceivePulse(attach->chid, &msg, sizeof(msg), NULL);
+
+		// Safeguard against bad reception.
+		if (rcvid != 0) {
+			fprintf(stderr, "myController: MsgReceivePulse entountered unexpected error! rcvid: %d\n", rcvid);
+			// Terminate gracefully.
+			cleanExitFailure();
 		}
 
-		nb = msg->i.nbytes;
-	}
-	_IO_SET_WRITE_NBYTES(ctp, nb);
+		// Process the message.
+		handle_message(&msg);
 
-	if (msg->i.nbytes > 0)
-		ocb->attr->flags |= IOFUNC_ATTR_MTIME | IOFUNC_ATTR_CTIME;
-
-	return (_RESMGR_NPARTS(0));
-}
-
-int io_open(resmgr_context_t *ctp, io_open_t *msg, RESMGR_HANDLE_T *handle,
-		void *extra) {
-	if ((server_coid = name_open(DEVICE_NAME, 0)) == -1) {
-		perror("name_open failed.");
-		return EXIT_FAILURE;
 	}
 
-	return (iofunc_open_default(ctp, msg, handle, extra));
-}
-
-int main(int argc, char *argv[]) {
-	dispatch_t *dpp;
-	resmgr_io_funcs_t io_funcs;
-	resmgr_connect_funcs_t connect_funcs;
-	iofunc_attr_t ioattr;
-	dispatch_context_t *ctp;
-	int id;
-
-	if ((dpp = dispatch_create()) == NULL) {
-		fprintf(stderr, "%s:  Unable to allocate dispatch context.\n", argv[0]);
-		return (EXIT_FAILURE);
-	}
-	iofunc_func_init(_RESMGR_CONNECT_NFUNCS, &connect_funcs, _RESMGR_IO_NFUNCS,
-			&io_funcs);
-	connect_funcs.open = io_open;
-	io_funcs.read = io_read;
-	io_funcs.write = io_write;
-
-	iofunc_attr_init(&ioattr, S_IFCHR | 0666, NULL, NULL);
-
-	if ((id = resmgr_attach(dpp, NULL, DEVICE_PATH, _FTYPE_ANY, 0,
-			&connect_funcs, &io_funcs, &ioattr)) == -1) {
-		fprintf(stderr, "%s:  Unable to attach name.\n", argv[0]);
-		return (EXIT_FAILURE);
-	}
-
-	printf(
-			"myDevice: path '%s' registered to resource manager! Ready for dispatch ...\n",
-			DEVICE_PATH);
-
-	ctp = dispatch_context_alloc(dpp);
-	while (1) {
-		ctp = dispatch_block(ctp);
-		dispatch_handler(ctp);
-	}
 	return EXIT_SUCCESS;
 }
+
