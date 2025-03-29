@@ -8,9 +8,27 @@
 #ifndef A2_H_
 #define A2_H_
 
+// String representations of the instruction set that the ResMgr recognizes
+#define INSTR_START "start"
+#define INSTR_STOP 	"stop"
+#define INSTR_SET 	"set"
+#define INSTR_PAUSE "pause"
+#define INSTR_QUIT 	"quit"
+
+typedef enum {
+	CMD_INVALID,
+	CMD_START,
+	CMD_STOP,
+	CMD_SET,
+	CMD_PAUSE,
+	CMD_QUIT
+} command_t;
+
 #define DEVICE_NAME "metronome"
 #define DEVICE_PATH "/dev/local/metronome"
-#define DEV_STATUS_BUFSIZE 255
+#define MSG_BUFSIZE 255
+#define CMD_BUFSIZE 32
+#define CMD_SCAN_FORMAT "%31s %31s"
 
 #define MAX_BPM 400
 #define USAGE_STR "Usage: metronome <bpm> <timesig-top> <timesig-bottom>"
@@ -22,7 +40,7 @@
 
 typedef union {
 	struct _pulse pulse;
-	char msg[DEV_STATUS_BUFSIZE];
+	char msg[MSG_BUFSIZE];
 } my_message_t;
 
 typedef struct {

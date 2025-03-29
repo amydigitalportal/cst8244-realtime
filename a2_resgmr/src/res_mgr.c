@@ -51,6 +51,14 @@ const rhythm_pattern_t* get_rhythmPattern(int top, int bottom) {
 	return NULL;
 }
 
+command_t parse_command(const char *cmd) {
+	if (strcmp(cmd, INSTR_START) == 0) return CMD_START;
+	if (strcmp(cmd, INSTR_SET) == 0)   return CMD_SET;
+	if (strcmp(cmd, INSTR_PAUSE) == 0) return CMD_PAUSE;
+	if (strcmp(cmd, INSTR_QUIT) == 0)  return CMD_QUIT;
+	return CMD_INVALID;
+}
+
 
 int io_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
 	int nb;
@@ -81,34 +89,38 @@ int io_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
 }
 
 int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
-	int nb = 0;
+	int nbytes = 0;
 
+
+	// Check that we received all the data in one message
 	if (msg->i.nbytes == ctp->info.msglen - (ctp->offset + sizeof(*msg))) {
-		/* have all the data */
-		char *buf;
-		char *alert_msg;
-		int i, small_integer;
-		buf = (char*) (msg + 1);
 
-		if (strstr(buf, "alert") != NULL) {
-			for (i = 0; i < 2; i++) {
-				alert_msg = strsep(&buf, " ");
-			}
-			small_integer = atoi(alert_msg);
-			if (small_integer >= 1 && small_integer <= 99) {
-				//FIXME :: replace getprio() with SchedGet()
-				MsgSendPulse(server_coid, SchedGet(0, 0, NULL),
-				_PULSE_CODE_MINAVAIL, small_integer);
-			} else {
-				printf("Integer is not between 1 and 99.\n");
-			}
-		} else {
-			strcpy(data, buf);
+		char *buf;
+		char command[CMD_BUFSIZE] = {0};
+		char arg[CMD_BUFSIZE] = {0};
+
+		// trim newline from the input
+		buf[msg->i.nbytes - 1] = '\0';
+
+		// parse command and optional arguments
+		sscanf(buf, CMD_SCAN_FORMAT, command, arg);
+
+		switch (parse_command(command)) {
+			case CMD_START:
+				break;
+			case CMD_PAUSE:
+				break;
+			case CMD_SET:
+				break;
+			case CMD_QUIT:
+				break;
+			default:
+				break;
 		}
 
-		nb = msg->i.nbytes;
+		nbytes = msg->i.nbytes;
 	}
-	_IO_SET_WRITE_NBYTES(ctp, nb);
+	_IO_SET_WRITE_NBYTES(ctp, nbytes);
 
 	if (msg->i.nbytes > 0)
 		ocb->attr->flags |= IOFUNC_ATTR_MTIME | IOFUNC_ATTR_CTIME;
