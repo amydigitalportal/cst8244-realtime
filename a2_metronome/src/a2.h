@@ -46,16 +46,15 @@ typedef union {
 } my_message_t;
 
 typedef struct {
-	int bpm;
-	int top;
-	int bottom;
-} metronome_config_t;
-
-typedef struct {
 	int top;
 	int bottom;
 	int num_intervals;
 	const char *pattern[12]; // max 12 from 12/8
 } rhythm_pattern_t;
+
+typedef struct {
+	int bpm;
+	const rhythm_pattern_t *rp;
+} metronome_config_t;
 
 #endif /* A2_H_ */
