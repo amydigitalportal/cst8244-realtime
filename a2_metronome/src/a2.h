@@ -54,6 +54,7 @@ typedef struct {
 
 typedef struct {
 	int bpm;
+	double timer_interval_sec; // Tick interval of the timer
 	const rhythm_pattern_t *rp;
 } metronome_config_t;
 
