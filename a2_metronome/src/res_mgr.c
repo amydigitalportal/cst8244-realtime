@@ -29,7 +29,7 @@ const char *metronome_help_text =
 	"    stop         - stop the metronome; use ‘start’ to resume\n";
 
 // Metronome
-metronome_t metro;	// Structure holding data for a metronome device
+metronome_t *metro;	// Structure holding data for a metronome device
 
 // IPC vars
 my_message_t msg;
@@ -98,8 +98,8 @@ void request_resmgr_shutdown() {
  * Helper function used to perform cleanup ops on the metronome thread.
  */
 void _svr_cleanup() {
-	if (metro.timer_id != 0)
-		timer_delete(metro.timer_id);
+	if (metro->timer_id != 0)
+		timer_delete(metro->timer_id);
 
 	if (attach != NULL)
 		name_detach(attach, 0);
@@ -133,14 +133,19 @@ void* _svr_clean_exit_success() {
  * Helper function for updating the Metronome device status string
  */
 void _update_status_string(metronome_t *metro) {
-	char *status_str = metro->status_str;
-	memset(&status_str, 0, sizeof(status_str));
-
 	metronome_config_t cfg = metro->cfg;
-	snprintf(status_str,
-			sizeof(status_str),
-			"[metronome: %d bpm, time signature %d/%d, interval: %.2f sec]\n",
-			cfg.bpm, cfg.rp->top, cfg.rp->bottom, cfg.timer_interval_sec
+
+	// Safely zero the actual buffer
+	memset(metro->status_str, 0, sizeof(metro->status_str));
+
+	// Print into the actual buffer with the correct size
+	snprintf(metro->status_str,
+	         sizeof(metro->status_str),
+	         "[metronome: %d bpm, time signature %d/%d, interval: %.2f sec]\n",
+	         cfg.bpm,
+	         cfg.rp ? cfg.rp->top : 0,
+	         cfg.rp ? cfg.rp->bottom : 0,
+	         cfg.timer_interval_sec
 	);
 }
 
@@ -160,7 +165,6 @@ double _calc_interval_sec(int bpm, const rhythm_pattern_t *pattern) {
  * Helper function to perform configuration on the metronome.
  */
 int _configure_metronome(metronome_t *metro, int bpm, int top, int bottom) {
-
 	if (bpm < MIN_BPM || bpm > MAX_BPM) {
 		fprintf(stderr, "-- ERROR: Invalid BPM '%d'! (Must be between '%d' and '%d')\n",
 				bpm, MIN_BPM, MAX_BPM);
@@ -225,7 +229,7 @@ int _update_metronome_timer(metronome_t *metro, double interval_sec) {
 		return -1;
 	}
 
-//	printf("[Metro] Timer interval updated to %.3f seconds\n", interval_sec);
+//	printf("[Metro] Timer interval updated to %.3f seconds\n", interval_sec); // debug log
 	return 0;
 }
 
@@ -278,9 +282,12 @@ void _handle_metronome_pulse(metronome_t *metro) {
 		// Reset index to first element
 		current_pattern_index = 0;
 
+		// carriage return KRRRCHING
+		printf("\n");
+
 		// If a new pattern is queued...
 		if (metro->pattern_update_pending) {
-			// apply the pattern now.
+			// apply the new pattern to the current configuration.
 			cfg->rp = metro->next_rp;
 			metro->pattern_update_pending = false; // reset the flag
 		}
@@ -299,17 +306,19 @@ void _handle_metronome_pulse(metronome_t *metro) {
  * Dedicated worker thread function for the simulated Metronome driver.
  */
 void* metronome_thread_func(void* arg) {
+
 	// -- PHASE I: create a named channel to receive pulses
+	name_attach_t* attach = metro->p_attach;
+
 	attach = name_attach( NULL, DEVICE_NAME, 0 );
 	if (!attach) {
 		perror("[Metro] name_attach failed");
 		return _svr_clean_exit_failure;
 	}
 
-
 	// Initialize the Timer Pulse event signal
 	SIGEV_PULSE_INIT(
-		&metro.timer_event,		// The sigevent struct
+		&(metro->timer_event),		// The sigevent struct
 		ConnectAttach(0, 0, attach->chid, _NTO_SIDE_CHANNEL, 0), // connection ID to the channel
 		SchedGet(0, 0, NULL),	// priority of the pulse
 		METRONOME_PULSE_CODE,	// pulse code for this event
@@ -317,14 +326,14 @@ void* metronome_thread_func(void* arg) {
 	);
 
 	// Create the interval timer to "drive" the metronome
-	if (timer_create(CLOCK_MONOTONIC, &(metro.timer_event), &(metro.timer_id)) == -1) {
+	if (timer_create(CLOCK_MONOTONIC, &(metro->timer_event), &(metro->timer_id)) == -1) {
 		perror("[Metro] Failed to create timer");
 		return _svr_clean_exit_failure;
 	}
 
 	// Start the interval timer
 	// (note: it is possible for the timer to send unhandled pulses before the first `MsgReceivePulse` call)
-	if (_start_metronome_timer(&metro) != 0) {
+	if (_start_metronome_timer(metro) != 0) {
 		fprintf(stderr, "[Metro] Failed to start timer on initialization!\n");
 		return _svr_clean_exit_failure();
 	}
@@ -353,7 +362,7 @@ void* metronome_thread_func(void* arg) {
 					break;
 
 				case METRONOME_PULSE_CODE: {
-					_handle_metronome_pulse(&metro);
+					_handle_metronome_pulse(metro);
 					break;
 				}
 
@@ -366,13 +375,13 @@ void* metronome_thread_func(void* arg) {
 					break;
 
 				case START_PULSE_CODE:
-					if (_start_metronome_timer(&metro) != 0) {
+					if (_start_metronome_timer(metro) != 0) {
 						fprintf(stderr, "[Metro] Received START but metronome is already playing! Ignoring command...");
 					}
 					break;
 
 				case STOP_PULSE_CODE:
-					if (_stop_metronome_timer(&metro) != 0) {
+					if (_stop_metronome_timer(metro) != 0) {
 						fprintf(stderr, "[Metro] Received STOP but metronome is not playing! Ignoring command...");
 					}
 					break;
@@ -427,7 +436,7 @@ int _io_read_buffer(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb, co
  * IO_READ API function for reading the status of the metronome device.
  */
 int io_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
-	return _io_read_buffer(ctp, msg, ocb, metro.status_str);
+	return _io_read_buffer(ctp, msg, ocb, metro->status_str);
 }
 
 /**
@@ -512,8 +521,8 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 				if (sscanf(arg_buf, "%d %d %d", &bpm, &ts_top, &ts_bottom) == METRO_CFG_ARGC) {
 
 					// Attempt to configure the metronome
-					if (_configure_metronome(&metro, bpm, ts_top, ts_bottom) == 0) {
-						printf("\n[RM] Configuration written:\n %s\n\n", metro.status_str);
+					if (_configure_metronome(metro, bpm, ts_top, ts_bottom) == 0) {
+						printf("\n[RM] Configuration written:\n %s\n\n", metro->status_str);
 						_send_metronome_pulse(SET_CONFIG_PULSE_CODE, METRO_CFG_ARGC);
 					} else {
 						_send_metronome_pulse(SET_CONFIG_PULSE_CODE, -1);
@@ -548,6 +557,8 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 void _clt_cleanup() {
 	if (metronome_coid)
 		name_close(metronome_coid);
+
+	free(metro);
 }
 
 /**
@@ -601,11 +612,18 @@ int main(int argc, char *argv[]) {
 	int init_top 	= 		max(atoi(argv[2]), 0);
 	int init_bottom = 		max(atoi(argv[3]), 0);
 
-	// Configure the metronome for the first time.
-	if (_configure_metronome(&metro, init_bpm, init_top, init_bottom) != 0) {
-		return EXIT_FAILURE;
+	// Allocate memory for our metronome structure
+	metro = malloc(sizeof(metronome_t));
+	if (!metro) {
+		perror("Failed to allocate metronome");
+		return clt_clean_exit_failure();
 	}
+	memset(metro, 0, sizeof(metronome_t)); // optional but good for zero-initialization
 
+	// Configure the metronome for the first time.
+	if (_configure_metronome(metro, init_bpm, init_top, init_bottom) != 0) {
+		return clt_clean_exit_failure();
+	}
 
 	// -- BEGIN ResMgr.
 
@@ -617,7 +635,7 @@ int main(int argc, char *argv[]) {
 	// Crate dispatch structeur
 	if ((dpp = dispatch_create()) == NULL) {
 		fprintf(stderr, "%s:  Unable to allocate dispatch context.\n", argv[0]);
-		return (EXIT_FAILURE);
+		return clt_clean_exit_failure();
 	}
 
 	// Init connect + Metronome IO func tables
@@ -634,7 +652,7 @@ int main(int argc, char *argv[]) {
 	if ((id = resmgr_attach(dpp, NULL, METRONOME_DEV_PATH, _FTYPE_ANY, 0,
 			&connect_funcs, &io_funcs, &_metro_ioattr)) == -1) {
 		fprintf(stderr, "%s:  Unable to attach %s.\n", argv[0], METRONOME_DEV_PATH);
-		return (EXIT_FAILURE);
+		return clt_clean_exit_failure();
 	}
 
 	printf("myDevice: path '%s' registered to resource manager! Ready for dispatch ...\n",
@@ -652,7 +670,7 @@ int main(int argc, char *argv[]) {
 	if ((help_id = resmgr_attach(dpp, NULL, METRONOME_HELP_DEV_PATH, _FTYPE_ANY, 0,
 			&connect_funcs, &help_io_funcs, &_help_attr)) == -1) {
 		fprintf(stderr, "%s: Unable to attach %s\n", argv[0], METRONOME_HELP_DEV_PATH);
-		return (EXIT_FAILURE);
+		return clt_clean_exit_failure();
 	}
 
 
@@ -662,7 +680,7 @@ int main(int argc, char *argv[]) {
 	pthread_attr_init(&attr);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
-	if (pthread_create(&metro.thread, &attr, metronome_thread_func, NULL) != 0) {
+	if (pthread_create(&(metro->thread), &attr, metronome_thread_func, NULL) != 0) {
 		perror("res_mgr: Failed to create metronome thread");
 		return clt_clean_exit_failure();
 	}
