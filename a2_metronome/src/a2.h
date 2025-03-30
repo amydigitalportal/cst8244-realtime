@@ -31,15 +31,18 @@ typedef enum {
 #define CMD_BUFSIZE 32
 #define CMD_SCAN_FORMAT "%31s %31s"
 
-#define MAX_BPM 400
-#define USAGE_STR "Usage: metronome <bpm> <timesig-top> <timesig-bottom>"
-
 #define METRONOME_PULSE_CODE 	(_PULSE_CODE_MINAVAIL + 1)
 #define PAUSE_PULSE_CODE     	(_PULSE_CODE_MINAVAIL + 2)
 #define QUIT_PULSE_CODE      	(_PULSE_CODE_MINAVAIL + 3)
 #define SET_CONFIG_PULSE_CODE 	(_PULSE_CODE_MINAVAIL + 4)
 #define START_PULSE_CODE 		(_PULSE_CODE_MINAVAIL + 5)
 #define STOP_PULSE_CODE 		(_PULSE_CODE_MINAVAIL + 6)
+
+#define MAX_BPM 400
+#define USAGE_STR "Usage: metronome <bpm> <timesig-top> <timesig-bottom>"
+
+#define METRO_MIN_PAUSE 1
+#define METRO_MAX_PAUSE 9
 
 typedef union {
 	struct _pulse pulse;
