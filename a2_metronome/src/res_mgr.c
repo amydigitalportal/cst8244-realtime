@@ -46,6 +46,7 @@ int rcvid;
 // ResMgr globals
 iofunc_attr_t metro_ioattr;
 iofunc_attr_t help_attr;
+bool is_resmgr_looping = false;
 
 // Lookup table for rhythm pattenrs
 static const rhythm_pattern_t rhythm_table[] = {
@@ -338,6 +339,9 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 		// parse command and optional arguments
 		sscanf(msg_buf, CMD_SCAN_FORMAT, command_buf, arg_buf);
 
+		int prio = SchedGet(0, 0, NULL); // get current thread priority
+		int msg_result;
+
 		// process command and (if provided) args
 		command_t cmd = parse_command(command_buf);
 		switch (cmd) {
@@ -348,26 +352,23 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 
 			case CMD_QUIT:
 				printf("[RM] Sending QUIT pulse to metronome...\n");
-
-				int prio = SchedGet(0, 0, NULL); // get current thread priority
-				int result = MsgSendPulse(metronome_coid,
-				                          prio,
-				                          QUIT_PULSE_CODE,
-										  0); // empty value
-
-				if (result == -1) {
+				msg_result = MsgSendPulse(metronome_coid, prio, QUIT_PULSE_CODE, 0);
+				if (msg_result == -1) {
 					perror("[RM] MsgSendPulse failed");
 				}
-				break;
 
-			case CMD_START:
+				// Indicate to exit main loop.
+				is_resmgr_looping = false;
 				break;
-
-			case CMD_STOP:
-				break;
-
-			case CMD_SET:
-				break;
+//
+//			case CMD_START:
+//				break;
+//
+//			case CMD_STOP:
+//				break;
+//
+//			case CMD_SET:
+//				break;
 
 			default:
 				fprintf(stderr, "[RM] Unknown or unhandled command: %s\n", command_buf);
@@ -507,7 +508,9 @@ int main(int argc, char *argv[]) {
 
 	// -- START main dispatch loop.
 	ctp = dispatch_context_alloc(dpp);
-	while (1) {
+
+	is_resmgr_looping = true;
+	while (is_resmgr_looping) {
 		ctp = dispatch_block(ctp);
 		dispatch_handler(ctp);
 	}
