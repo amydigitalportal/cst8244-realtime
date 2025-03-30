@@ -15,6 +15,17 @@
 #define RM_EXPECTED_ARGC 4
 
 // Metronome vars
+const char *metronome_help_text =
+	"\nMetronome Resource Manager (ResMgr)\n"
+	"\n"
+	"  Usage: metronome <bpm> <ts-top> <ts-bottom>\n"
+	"\n"
+	"  API:\n"
+	"    pause [1-9]  - pause the metronome for 1-9 seconds\n"
+	"    quit         - quit the metronome\n"
+	"    set <bpm> <ts-top> <ts-bottom> - set the metronome to <bpm> ts-top/ts-bottom\n"
+	"    start        - start the metronome from stopped state\n"
+	"    stop         - stop the metronome; use ‘start’ to resume\n";
 char metronome_status_str[MSG_BUFSIZE]; 			// Holds read-reply content (ie. reporting on the status of the metronome device upon being read.)
 metronome_config_t metro_cfg 			= {}; 		// The active configuration of the metronome
 const rhythm_pattern_t *next_rpattern;				// The pattern of the next measure
@@ -31,6 +42,10 @@ my_message_t msg;
 name_attach_t* attach;
 int metronome_coid;
 int rcvid;
+
+// ResMgr globals
+iofunc_attr_t metro_ioattr;
+iofunc_attr_t help_attr;
 
 // Lookup table for rhythm pattenrs
 static const rhythm_pattern_t rhythm_table[] = {
@@ -265,24 +280,22 @@ command_t parse_command(const char *cmd) {
 	return CMD_INVALID;
 }
 
-int io_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
-	int nbytes;
-
-	nbytes = strlen(metronome_status_str);
+/**
+ * IO function that performs the static read operation of the resource manager.
+ */
+int _io_read_buffer(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb, const char *buffer) {
+	int len = strlen(buffer);
 
 	//test to see if we have already sent the whole message.
-	if (ocb->offset == nbytes)
+	if (ocb->offset >= len)
 		return 0;
 
 	//We will return which ever is smaller the size of our data or the size of the buffer
-	nbytes = min(nbytes, msg->i.nbytes);
-
+	int nbytes = min(len - ocb->offset, msg->i.nbytes);
 	//Set the number of bytes we will return
 	_IO_SET_READ_NBYTES(ctp, nbytes);
-
 	//Copy data into reply buffer.
-	SETIOV(ctp->iov, metronome_status_str, nbytes);
-
+	SETIOV(ctp->iov, buffer + ocb->offset, nbytes);
 	//update offset into our data used to determine start position for next read.
 	ocb->offset += nbytes;
 
@@ -290,8 +303,23 @@ int io_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
 	if (nbytes > 0)
 		ocb->attr->flags |= IOFUNC_ATTR_ATIME;
 
-	return (_RESMGR_NPARTS(1));
+	return _RESMGR_NPARTS(1);
 }
+
+/**
+ * IO_READ API function for reading the status of the metronome device.
+ */
+int io_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
+	return _io_read_buffer(ctp, msg, ocb, metronome_status_str);
+}
+
+/**
+ * IO_READ API function for reading the help (manual) page for the device.
+ */
+int io_read_help(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
+	return _io_read_buffer(ctp, msg, ocb, metronome_help_text);
+}
+
 
 int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 	int nbytes = 0;
@@ -383,16 +411,19 @@ int clt_clean_exit_success() {
 	return EXIT_SUCCESS;
 }
 
-int io_open(resmgr_context_t *ctp, io_open_t *msg, RESMGR_HANDLE_T *handle,
-		void *extra) {
-	// Attempt opening a namespace connection to metronome device and capture file descriptor (coid)
-	if ((metronome_coid = name_open(DEVICE_NAME, 0)) == -1) {
-		perror("name_open failed.");
-		return EXIT_FAILURE;
+int io_open(resmgr_context_t *ctp, io_open_t *msg, RESMGR_HANDLE_T *handle, void *extra) {
+	// Determine if this is the metronome or help file based on attribute pointer
+	if (handle == &metro_ioattr) {
+		// Only open the metronome device connection
+		if ((metronome_coid = name_open(DEVICE_NAME, 0)) == -1) {
+			perror("name_open failed.");
+			return EXIT_FAILURE;
+		}
 	}
 
-	return (iofunc_open_default(ctp, msg, handle, extra));
+	return iofunc_open_default(ctp, msg, handle, extra);
 }
+
 
 int main(int argc, char *argv[]) {
 
@@ -416,33 +447,53 @@ int main(int argc, char *argv[]) {
 	// -- BEGIN ResMgr.
 
 	dispatch_t *dpp;
-	resmgr_io_funcs_t io_funcs;
+	resmgr_io_funcs_t io_funcs, help_io_funcs;
 	resmgr_connect_funcs_t connect_funcs;
-	iofunc_attr_t ioattr;
 	dispatch_context_t *ctp;
-	int id;
+	int id, help_id;
 
+	// Crate dispatch structeur
 	if ((dpp = dispatch_create()) == NULL) {
 		fprintf(stderr, "%s:  Unable to allocate dispatch context.\n", argv[0]);
 		return (EXIT_FAILURE);
 	}
-	iofunc_func_init(_RESMGR_CONNECT_NFUNCS, &connect_funcs, _RESMGR_IO_NFUNCS,
-			&io_funcs);
+
+	// Init connect + ID func tables
+	iofunc_func_init(_RESMGR_CONNECT_NFUNCS, &connect_funcs,
+	                 _RESMGR_IO_NFUNCS, &io_funcs);
 	connect_funcs.open = io_open;
 	io_funcs.read = io_read;
 	io_funcs.write = io_write;
 
-	iofunc_attr_init(&ioattr, S_IFCHR | 0666, NULL, NULL);
+	// Init metronome device path attribute for read-write
+	iofunc_attr_init(&metro_ioattr, S_IFCHR | 0666, NULL, NULL);
 
-	// Bind requests on the device path to the dispatch handle.
-	if ((id = resmgr_attach(dpp, NULL, DEVICE_PATH, _FTYPE_ANY, 0,
-			&connect_funcs, &io_funcs, &ioattr)) == -1) {
+	// Attach primary device
+	if ((id = resmgr_attach(dpp, NULL, METRONOME_DEV_PATH, _FTYPE_ANY, 0,
+			&connect_funcs, &io_funcs, &metro_ioattr)) == -1) {
 		fprintf(stderr, "%s:  Unable to attach name.\n", argv[0]);
 		return (EXIT_FAILURE);
 	}
 
 	printf("myDevice: path '%s' registered to resource manager! Ready for dispatch ...\n",
-			DEVICE_PATH);
+			METRONOME_DEV_PATH);
+
+
+	// -- Setup help device --
+	iofunc_func_init(_RESMGR_CONNECT_NFUNCS, NULL,
+	                 _RESMGR_IO_NFUNCS, &help_io_funcs);
+	help_io_funcs.read = io_read_help;
+
+	iofunc_attr_init(&help_attr, S_IFCHR | 0444, NULL, NULL); // read-only
+
+	// Attach help-info page device
+	if ((help_id = resmgr_attach(dpp, NULL, METRONOME_HELP_DEV_PATH, _FTYPE_ANY, 0,
+			&connect_funcs, &help_io_funcs, &help_attr)) == -1) {
+		fprintf(stderr, "%s: Unable to attach %s\n", argv[0], METRONOME_HELP_DEV_PATH);
+		return (EXIT_FAILURE);
+	}
+
+
 
 	// Create metronome thread.
 	pthread_attr_t attr;

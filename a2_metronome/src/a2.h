@@ -25,7 +25,8 @@ typedef enum {
 } command_t;
 
 #define DEVICE_NAME "metronome"
-#define DEVICE_PATH "/dev/local/metronome"
+#define METRONOME_DEV_PATH      "/dev/local/metronome"
+#define METRONOME_HELP_DEV_PATH "/dev/local/metronome-help"
 #define MSG_BUFSIZE 255
 #define CMD_BUFSIZE 32
 #define CMD_SCAN_FORMAT "%31s %31s"
