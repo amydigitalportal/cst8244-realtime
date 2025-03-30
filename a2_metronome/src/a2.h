@@ -63,9 +63,23 @@ typedef struct {
 } rhythm_pattern_t;
 
 typedef struct {
-	int bpm;
-	double timer_interval_sec; // Tick interval of the timer
-	const rhythm_pattern_t *rp;
+	int bpm;							// Beats per minute
+	double timer_interval_sec; 			// Tick interval of the timer
+	const rhythm_pattern_t *rp;			// Current pattern configured to the metronome
 } metronome_config_t;
+
+typedef struct {
+	char status_str[MSG_BUFSIZE];		// Holds read-reply content (ie. reporting on the status of the metronome device upon being read.)
+	metronome_config_t cfg;				// The active configuration of the metronome
+	const rhythm_pattern_t *next_rp;	// The pattern of the next measure
+	bool pattern_update_pending;		// Flag indicating whether the pattern is to change on the next measure
+	bool timer_update_pending;			// Flag indicating whether the timer should change its tick rate
+	bool is_playing;					// The metronome play status.
+
+	pthread_t thread;  					// Worker thread simulating a driver for a metronome device.
+
+	struct sigevent timer_event; // signal emitted on timer tick
+	timer_t timer_id;
+} metronome_t;
 
 #endif /* A2_H_ */

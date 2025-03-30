@@ -16,7 +16,6 @@
 
 
 
-// Metronome vars
 const char *metronome_help_text =
 	"\nMetronome Resource Manager (ResMgr)\n"
 	"\n"
@@ -28,17 +27,9 @@ const char *metronome_help_text =
 	"    set <bpm> <ts-top> <ts-bottom> - set the metronome to <bpm> ts-top/ts-bottom\n"
 	"    start        - start the metronome from stopped state\n"
 	"    stop         - stop the metronome; use ‘start’ to resume\n";
-char metronome_status_str[MSG_BUFSIZE]; 			// Holds read-reply content (ie. reporting on the status of the metronome device upon being read.)
-metronome_config_t metro_cfg 			= {}; 		// The active configuration of the metronome
-const rhythm_pattern_t *next_rpattern;				// The pattern of the next measure
-bool _pattern_update_pending 			= false; 	// Flag indicating whether the pattern is to change on the next measure
-bool _timer_update_pending 				= false;	// Flag indicating whether the timer should change its tick rate
-pthread_t metronome_thread;							// Worker thread simulating a driver for a metronome device.
-bool _is_metro_playing 					= false;	// State of the metronome activity.
 
-// Signal & Timer vars
-struct sigevent _timer_event; // signal emitted on timer tick
-timer_t _metro_timer_id;
+// Metronome
+metronome_t metro;	// Structure holding data for a metronome device
 
 // IPC vars
 my_message_t msg;
@@ -82,7 +73,7 @@ const rhythm_pattern_t* get_rhythm_pattern(int top, int bottom) {
 
 	// No pattern matching args ...
 	fprintf(stderr, "[Metro] no rhythm pattern matching provided args (top: %d, bottom: %d)\n",
-			metro_cfg.rp->top, metro_cfg.rp->bottom);
+			top, bottom);
 	return NULL;
 }
 
@@ -104,11 +95,11 @@ void request_resmgr_shutdown() {
 /// --- METRONOME --- ///
 
 /**
- * Function used to perform cleanup ops on the metronome thread.
+ * Helper function used to perform cleanup ops on the metronome thread.
  */
 void _svr_cleanup() {
-	if (_metro_timer_id != 0)
-		timer_delete(_metro_timer_id);
+	if (metro.timer_id != 0)
+		timer_delete(metro.timer_id);
 
 	if (attach != NULL)
 		name_detach(attach, 0);
@@ -141,12 +132,15 @@ void* _svr_clean_exit_success() {
 /**
  * Helper function for updating the Metronome device status string
  */
-void _update_status_string(const metronome_config_t *cfg) {
-	memset(&metronome_status_str, 0, sizeof(metronome_status_str));
-	snprintf(metronome_status_str,
-			sizeof(metronome_status_str),
+void _update_status_string(metronome_t *metro) {
+	char *status_str = metro->status_str;
+	memset(&status_str, 0, sizeof(status_str));
+
+	metronome_config_t cfg = metro->cfg;
+	snprintf(status_str,
+			sizeof(status_str),
 			"[metronome: %d bpm, time signature %d/%d, interval: %.2f sec]\n",
-			cfg->bpm, cfg->rp->top, cfg->rp->bottom, cfg->timer_interval_sec
+			cfg.bpm, cfg.rp->top, cfg.rp->bottom, cfg.timer_interval_sec
 	);
 }
 
@@ -165,7 +159,7 @@ double _calc_interval_sec(int bpm, const rhythm_pattern_t *pattern) {
 /**
  * Helper function to perform configuration on the metronome.
  */
-int _configure_metronome(int bpm, int top, int bottom) {
+int _configure_metronome(metronome_t *metro, int bpm, int top, int bottom) {
 
 	if (bpm < MIN_BPM || bpm > MAX_BPM) {
 		fprintf(stderr, "-- ERROR: Invalid BPM '%d'! (Must be between '%d' and '%d')\n",
@@ -180,25 +174,27 @@ int _configure_metronome(int bpm, int top, int bottom) {
 		return -1;
 	}
 
+	metronome_config_t *cfg = &(metro->cfg);
+
 	// Check if current pattern is null (eg. on init)
-	if (metro_cfg.rp == NULL) {
+	if (cfg->rp == NULL) {
 		// Initialzize the metronome configuration
-		metro_cfg.rp = target_rp;
+		cfg->rp = target_rp;
 	}
 	else
 	{
 		// Queue up the target rhythm pattern for the next measure
-		next_rpattern = target_rp;
-		_pattern_update_pending = true; // Trip the flag for update
+		metro->next_rp = target_rp;
+		metro->pattern_update_pending = true; // Trip the flag for update
 	}
 
 	// Update the BPM and timer tick rate (note: this will only take effect on the next "tick" of the timer)
-	metro_cfg.bpm = bpm;
-	metro_cfg.timer_interval_sec = _calc_interval_sec(bpm, target_rp);
-	_timer_update_pending = true;
+	cfg->bpm = bpm;
+	cfg->timer_interval_sec = _calc_interval_sec(bpm, target_rp);
+	metro->timer_update_pending = true;
 
 	// Update the Metronome's status string
-	_update_status_string(&metro_cfg);
+	_update_status_string(metro);
 
 	return 0;
 }
@@ -206,7 +202,8 @@ int _configure_metronome(int bpm, int top, int bottom) {
 /**
  * Helper function to handle updating the timer specification using the given timer_t and interval in seconds.
  */
-int _update_metronome_timer(timer_t timer_id, double interval_sec) {
+int _update_metronome_timer(metronome_t *metro, double interval_sec) {
+	timer_t timer_id = metro->timer_id;
 	struct itimerspec itime = {0};
 
 	double adjusted_interval_sec = max(interval_sec, 0); // Safeguard against negative values.
@@ -220,7 +217,7 @@ int _update_metronome_timer(timer_t timer_id, double interval_sec) {
 	itime.it_interval.tv_nsec = nsec;
 
 	// Update the metronome playing status
-	_is_metro_playing = (sec > 0 || nsec > 0) ? 1 : 0;
+	metro->is_playing = (sec > 0 || nsec > 0) ? 1 : 0;
 
 	// Update the timer
 	if (timer_settime(timer_id, 0, &itime, NULL) == -1) {
@@ -239,12 +236,12 @@ int _update_metronome_timer(timer_t timer_id, double interval_sec) {
  * 		0	- successful start
  * 		-1 	- metronome is already playing
  */
-int _start_metronome_timer() {
-	if (_is_metro_playing) {
+int _start_metronome_timer(metronome_t *metro) {
+	if (metro->is_playing) {
 		return -1;
 	}
 
-	return _update_metronome_timer(_metro_timer_id, metro_cfg.timer_interval_sec);
+	return _update_metronome_timer(metro, metro->cfg.timer_interval_sec);
 }
 
 /**
@@ -254,43 +251,47 @@ int _start_metronome_timer() {
  * 		0	- successful stop
  * 		-1 	- metronome is already stopped
  */
-int _stop_metronome_timer() {
-	if (!_is_metro_playing) {
+int _stop_metronome_timer(metronome_t *metro) {
+	if (!metro->is_playing) {
 		return -1;
 	}
 
-	_timer_update_pending = false; // Ensure disabling of any other pending updates to the timer tick.
-	return _update_metronome_timer(_metro_timer_id, 0.0);
+	metro->timer_update_pending = false; // Ensure disabling of any other pending updates to the timer tick.
+	return _update_metronome_timer(metro, 0.0);
 }
 
-void _handle_metronome_pulse() {
-	const rhythm_pattern_t *rp = metro_cfg.rp;
-	int end_index = metro_cfg.rp->num_intervals - 1;
+void _handle_metronome_pulse(metronome_t *metro) {
+	metronome_config_t *cfg = &(metro->cfg);
+	const rhythm_pattern_t *rp = cfg->rp;
+
+	// Adjust pattern index if its out of bounds
+	int end_index = rp->num_intervals - 1;
 	current_pattern_index = max( 0, min( end_index, current_pattern_index ));
 
-	// Play the current beat
+	// Play (display) the current beat
 	const char *note = rp->pattern[current_pattern_index];
 	printf(note);
 
-	// Check if we have reached the end of the measure
+	// Check if we are at the end of the measure
 	bool is_end_of_measure = current_pattern_index >= end_index;
 	if (is_end_of_measure) {
 		// Reset index to first element
 		current_pattern_index = 0;
 
-		// If a new pattern is queued, apply it now
-		if (_pattern_update_pending) {
-			metro_cfg.rp = next_rpattern;
-			_pattern_update_pending = false; // reset the flag
+		// If a new pattern is queued...
+		if (metro->pattern_update_pending) {
+			// apply the pattern now.
+			cfg->rp = metro->next_rp;
+			metro->pattern_update_pending = false; // reset the flag
 		}
 	}
 
 	// check if bpm has changed
-	if (_timer_update_pending) {
+	if (metro->timer_update_pending) {
 		// Update the metronome timer tick rate
-		_update_metronome_timer(_metro_timer_id, metro_cfg.timer_interval_sec);
+		_update_metronome_timer(metro, cfg->timer_interval_sec);
 
-		_timer_update_pending = false; // Flip off the flag.
+		metro->timer_update_pending = false; // Flip off the flag.
 	}
 }
 
@@ -308,22 +309,22 @@ void* metronome_thread_func(void* arg) {
 
 	// Initialize the Timer Pulse event signal
 	SIGEV_PULSE_INIT(
-		&_timer_event,           // The sigevent struct
+		&metro.timer_event,		// The sigevent struct
 		ConnectAttach(0, 0, attach->chid, _NTO_SIDE_CHANNEL, 0), // connection ID to the channel
-		SchedGet(0, 0, NULL),   // priority of the pulse
-		METRONOME_PULSE_CODE,   // pulse code for this event
-		0                       // oprtional value
+		SchedGet(0, 0, NULL),	// priority of the pulse
+		METRONOME_PULSE_CODE,	// pulse code for this event
+		0						// oprtional value
 	);
 
 	// Create the interval timer to "drive" the metronome
-	if (timer_create(CLOCK_MONOTONIC, &_timer_event, &_metro_timer_id) == -1) {
+	if (timer_create(CLOCK_MONOTONIC, &(metro.timer_event), &(metro.timer_id)) == -1) {
 		perror("[Metro] Failed to create timer");
 		return _svr_clean_exit_failure;
 	}
 
 	// Start the interval timer
 	// (note: it is possible for the timer to send unhandled pulses before the first `MsgReceivePulse` call)
-	if (_start_metronome_timer() != 0) {
+	if (_start_metronome_timer(&metro) != 0) {
 		fprintf(stderr, "[Metro] Failed to start timer on initialization!\n");
 		return _svr_clean_exit_failure();
 	}
@@ -352,12 +353,12 @@ void* metronome_thread_func(void* arg) {
 					break;
 
 				case METRONOME_PULSE_CODE: {
-					_handle_metronome_pulse();
+					_handle_metronome_pulse(&metro);
 					break;
 				}
 
 				case SET_CONFIG_PULSE_CODE:
-					if (msg.pulse.value == METRO_CFG_ARGC) {
+					if (msg.pulse.value.sival_int == METRO_CFG_ARGC) {
 						printf("[Metro] Received SET pulse with %d args. Settings will be applied in subsequent metronome timer pulses (bpm on next tick, pattern on next measure).\n", METRO_CFG_ARGC);
 					} else {
 						fprintf(stderr, "[Metro] Received SET with failed configuration - no changes to metronome operation.\n");
@@ -365,13 +366,13 @@ void* metronome_thread_func(void* arg) {
 					break;
 
 				case START_PULSE_CODE:
-					if (_start_metronome_timer() != 0) {
+					if (_start_metronome_timer(&metro) != 0) {
 						fprintf(stderr, "[Metro] Received START but metronome is already playing! Ignoring command...");
 					}
 					break;
 
 				case STOP_PULSE_CODE:
-					if (_stop_metronome_timer() != 0) {
+					if (_stop_metronome_timer(&metro) != 0) {
 						fprintf(stderr, "[Metro] Received STOP but metronome is not playing! Ignoring command...");
 					}
 					break;
@@ -426,7 +427,7 @@ int _io_read_buffer(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb, co
  * IO_READ API function for reading the status of the metronome device.
  */
 int io_read(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
-	return _io_read_buffer(ctp, msg, ocb, metronome_status_str);
+	return _io_read_buffer(ctp, msg, ocb, metro.status_str);
 }
 
 /**
@@ -439,12 +440,14 @@ int io_read_help(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
 
 /**
  * Helper method to handle sending a pulse to the metronome connection.
+ *
+ * intptr_t supports QNX compatibility and safe passing of `int` and `enum`.
  */
-int _send_metronome_pulse(int code, int value) {
+int _send_metronome_pulse(int code, intptr_t value) {
 	int prio = SchedGet(0, 0, NULL);
 	int result = MsgSendPulse(metronome_coid, prio, code, value);
 	if (result == -1) {
-		fprintf(stderr, "[RM] Failed to send pulse (code %d, value %d): ", code, value);
+		fprintf(stderr, "[RM] Failed to send pulse (code %d, value %ld): ", code, (long)value);
 		perror("");
 	}
 	return result;
@@ -509,8 +512,8 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 				if (sscanf(arg_buf, "%d %d %d", &bpm, &ts_top, &ts_bottom) == METRO_CFG_ARGC) {
 
 					// Attempt to configure the metronome
-					if (_configure_metronome(bpm, ts_top, ts_bottom) == 0) {
-						printf("\n[RM] Configuration written:\n %s\n\n", metronome_status_str);
+					if (_configure_metronome(&metro, bpm, ts_top, ts_bottom) == 0) {
+						printf("\n[RM] Configuration written:\n %s\n\n", metro.status_str);
 						_send_metronome_pulse(SET_CONFIG_PULSE_CODE, METRO_CFG_ARGC);
 					} else {
 						_send_metronome_pulse(SET_CONFIG_PULSE_CODE, -1);
@@ -599,7 +602,7 @@ int main(int argc, char *argv[]) {
 	int init_bottom = 		max(atoi(argv[3]), 0);
 
 	// Configure the metronome for the first time.
-	if (_configure_metronome(init_bpm, init_top, init_bottom) != 0) {
+	if (_configure_metronome(&metro, init_bpm, init_top, init_bottom) != 0) {
 		return EXIT_FAILURE;
 	}
 
@@ -659,7 +662,7 @@ int main(int argc, char *argv[]) {
 	pthread_attr_init(&attr);
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 
-	if (pthread_create(&metronome_thread, &attr, &metronome_thread_func, NULL) != 0) {
+	if (pthread_create(&metro.thread, &attr, metronome_thread_func, NULL) != 0) {
 		perror("res_mgr: Failed to create metronome thread");
 		return clt_clean_exit_failure();
 	}
