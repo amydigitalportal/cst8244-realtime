@@ -8,6 +8,10 @@
 #ifndef A2_H_
 #define A2_H_
 
+// Preprocessor Gandalf
+#define STR_HELPER(x) #x
+#define STR(x) STR_HELPER(x)
+
 // String representations of the instruction set that the ResMgr recognizes
 #define INSTR_START "start"
 #define INSTR_STOP 	"stop"
@@ -38,8 +42,10 @@ typedef enum {
 #define START_PULSE_CODE 		(_PULSE_CODE_MINAVAIL + 5)
 #define STOP_PULSE_CODE 		(_PULSE_CODE_MINAVAIL + 6)
 
+#define METRO_CFG_ARGC 3
+#define MIN_BPM 0
 #define MAX_BPM 400
-#define USAGE_STR "Usage: metronome <bpm> <timesig-top> <timesig-bottom>"
+#define USAGE_STR "Usage: metronome <bpm " STR(MIN_BPM) "-" STR(MAX_BPM) "> <timesig-top> <timesig-bottom>"
 
 #define METRO_MIN_PAUSE 1
 #define METRO_MAX_PAUSE 9

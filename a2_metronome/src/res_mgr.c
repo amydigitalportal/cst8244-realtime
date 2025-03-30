@@ -12,7 +12,7 @@
 
 #include "a2.h"
 
-#define RM_EXPECTED_ARGC 4
+#define RM_EXPECTED_ARGC 1 + METRO_CFG_ARGC
 
 
 
@@ -166,13 +166,23 @@ double _calc_interval_sec(int bpm, const rhythm_pattern_t *pattern) {
  * Helper function to perform configuration on the metronome.
  */
 int _configure_metronome(int bpm, int top, int bottom) {
+
+	if (bpm < MIN_BPM || bpm > MAX_BPM) {
+		fprintf("-- ERROR: Invalid BPM '%d'! (Must be between '%d' and '%d')\n",
+				bpm, MIN_BPM, MAX_BPM);
+		return -1;
+	}
+
 	const rhythm_pattern_t *target_rp = get_rhythm_pattern(top, bottom);
 	if (target_rp == NULL) {
+		fprintf("-- ERROR: Rhythm pattern not found matching provided args (ts-top: '%d', ts-bottom: '%d')!\n",
+				top, bottom);
 		return -1;
 	}
 
 	// Check if current pattern is null (eg. on init)
 	if (metro_cfg.rp == NULL) {
+		// Initialzize the metronome configuration
 		metro_cfg.rp = target_rp;
 	}
 	else
@@ -437,33 +447,57 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 		// parse command and optional arguments
 		sscanf(msg_buf, CMD_SCAN_FORMAT, command_buf, arg_buf);
 
-		int prio = SchedGet(0, 0, NULL); // get current thread priority
-		int msg_result;
-
 		// process command and (if provided) args
 		command_t cmd = _parse_command(command_buf);
 		switch (cmd) {
 
 			case CMD_PAUSE:
 				printf("[RM] Received PAUSE command with arg: %s\n", arg_buf);
+				int pause_time = atoi(arg_buf);
+
+				// Check if the pause value is within range
+				if (pause_time >= METRO_MIN_PAUSE && pause_time <= METRO_MAX_PAUSE) {
+					_send_metronome_pulse(PAUSE_PULSE_CODE, pause_time);
+				} else {
+					fprintf(stderr, "[RM] Invalid PAUSE duration: '%d' (must be %d to %d)\n",
+							pause_time, METRO_MIN_PAUSE, METRO_MAX_PAUSE);
+				}
+
 				break;
 
 			case CMD_QUIT:
 				printf("[RM] Sending QUIT pulse to metronome...\n");
-				msg_result = MsgSendPulse(metronome_coid, prio, QUIT_PULSE_CODE, 0);
-				if (msg_result == -1) {
-					perror("[RM] MsgSendPulse failed");
-				}
+				_send_metronome_pulse(QUIT_PULSE_CODE, 0); // this should trigger a chain of calls to "request res-mgr shutdown" when the "metronome finishes cleanup".
 				break;
-//
-//			case CMD_START:
-//				break;
-//
-//			case CMD_STOP:
-//				break;
-//
-//			case CMD_SET:
-//				break;
+
+			case CMD_START:
+				printf("[RM] Sending START pulse to metronome...\n");
+				_send_metronome_pulse(START_PULSE_CODE, 0);
+				break;
+
+			case CMD_STOP:
+				printf("[RM] Sending STOP pulse to metronome...\n");
+				_send_metronome_pulse(STOP_PULSE_CODE, 0);
+				break;
+
+			case CMD_SET:
+				printf("[RM] Received SET command with args: %s\n", arg_buf);
+
+				// Parse arguments from the arg buffer
+				int bpm = 0, ts_top = 0, ts_bottom = 0;
+				if (sscanf(arg_buf, "%d %d %d", &bpm, &ts_top, &ts_bottom) == METRO_CFG_ARGC) {
+
+					// Attempt to configure the metronome
+					if (_configure_metronome(bpm, ts_top, ts_bottom) == 0) {
+						printf("\n[RM] SUCCESS! Metronome configured:\n %s\n\n", metronome_status_str);
+					}
+
+				// Handle invalid argument format
+				} else {
+					fprintf(stderr, "[RM] Invalid SET arguments.\n  Expected %s\n\n", USAGE_STR);
+				}
+
+				break;
 
 			default:
 				fprintf(stderr, "[RM] Unknown or unhandled command: %s\n", command_buf);
