@@ -1,4 +1,4 @@
-ARTIFACT = a2_resgmr
+ARTIFACT = a2_metronome
 
 #Build architecture/variant string, possible values: x86, armv7le, etc...
 PLATFORM ?= x86_64
