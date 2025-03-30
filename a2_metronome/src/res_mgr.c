@@ -46,7 +46,8 @@ int rcvid;
 // ResMgr globals
 iofunc_attr_t metro_ioattr;
 iofunc_attr_t help_attr;
-bool is_resmgr_looping = false;
+dispatch_t *dpp = NULL;
+volatile sig_atomic_t shutdown_requested = 0;
 
 // Lookup table for rhythm pattenrs
 static const rhythm_pattern_t rhythm_table[] = {
@@ -79,6 +80,16 @@ const rhythm_pattern_t* get_rhythm_pattern(int top, int bottom) {
 }
 
 
+/**
+ * API for sending the ResMgr a shutdown request during its dispatch cycle.
+ */
+void request_resmgr_shutdown() {
+	dispatch_context_t *ctp = dispatch_context_alloc(dpp);
+	shutdown_requested = 1;
+	dispatch_unblock(ctp);
+	dispatch_context_free(ctp);
+}
+
 
 /////////////////////////
 /// --- METRONOME --- ///
@@ -87,20 +98,22 @@ const rhythm_pattern_t* get_rhythm_pattern(int top, int bottom) {
  * Helper function to perform cleanup ops on the metronome thread.
  */
 void _svr_cleanup() {
-	printf("[Metro] Cleaning up metronome thread...\n");
-
 	if (timer_id != 0)
 		timer_delete(timer_id);
 
 	if (attach != NULL)
 		name_detach(attach, 0);
+
+	// Signal ResMgr for shutdown
+	printf("[Metro] Signaling ResMgr for finalizing...\n");
+	request_resmgr_shutdown();
 }
 
 /**
  * Helper function to perform general cleanup and a graceful shutdown when an error occurs.
  */
 void* svr_clean_exit_failure() {
-	printf("-- Cannot proceed due to error! Metronome job shutting down.\n");
+	printf("-- Cannot proceed due to error! Metronome WORKER shutting down.\n\n");
 	_svr_cleanup();
 
 	return NULL;
@@ -110,7 +123,7 @@ void* svr_clean_exit_failure() {
  * Helper function to perfom general cleanup on succesful finish of server operation
  */
 void* svr_clean_exit_success() {
-	printf("-- Metronome job finished; job thread closing!\n");
+	printf("-- Metronome WORKER finished; Worker thread closing!\n\n");
 	_svr_cleanup();
 
 	return NULL;
@@ -356,9 +369,6 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 				if (msg_result == -1) {
 					perror("[RM] MsgSendPulse failed");
 				}
-
-				// Indicate to exit main loop.
-				is_resmgr_looping = false;
 				break;
 //
 //			case CMD_START:
@@ -398,7 +408,7 @@ void _clt_cleanup() {
  * Helper function to perform general cleanup and a graceful shutdown of the client when an error occurs.
  */
 int clt_clean_exit_failure() {
-	printf("-- Cannot proceed due to error! Resource manager shutting down.\n");
+	printf("-- Cannot proceed due to error! RES-MGR shutting down.\n\n");
 	_clt_cleanup();
 	return EXIT_FAILURE;
 }
@@ -407,7 +417,7 @@ int clt_clean_exit_failure() {
  * Helper function to perform general cleanup on succesful finish of client operation
  */
 int clt_clean_exit_success() {
-	printf("-- Metronome Resource Manager finished; shutting down. Goodbye!\n");
+	printf("-- Metronome RES-MGR finished; shutting down. Goodbye!\n\n");
 	_clt_cleanup();
 	return EXIT_SUCCESS;
 }
@@ -447,7 +457,6 @@ int main(int argc, char *argv[]) {
 
 	// -- BEGIN ResMgr.
 
-	dispatch_t *dpp;
 	resmgr_io_funcs_t io_funcs, help_io_funcs;
 	resmgr_connect_funcs_t connect_funcs;
 	dispatch_context_t *ctp;
@@ -472,7 +481,7 @@ int main(int argc, char *argv[]) {
 	// Attach primary device
 	if ((id = resmgr_attach(dpp, NULL, METRONOME_DEV_PATH, _FTYPE_ANY, 0,
 			&connect_funcs, &io_funcs, &metro_ioattr)) == -1) {
-		fprintf(stderr, "%s:  Unable to attach name.\n", argv[0]);
+		fprintf(stderr, "%s:  Unable to attach %s.\n", argv[0], METRONOME_DEV_PATH);
 		return (EXIT_FAILURE);
 	}
 
@@ -508,11 +517,11 @@ int main(int argc, char *argv[]) {
 
 	// -- START main dispatch loop.
 	ctp = dispatch_context_alloc(dpp);
-
-	is_resmgr_looping = true;
-	while (is_resmgr_looping) {
+	while (!shutdown_requested) {
 		ctp = dispatch_block(ctp);
-		dispatch_handler(ctp);
+		if (ctp != NULL) {
+			dispatch_handler(ctp);
+		}
 	}
 
 	// Gracefully teardown.
