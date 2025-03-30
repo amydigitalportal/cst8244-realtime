@@ -63,7 +63,7 @@ static const rhythm_pattern_t rhythm_table[] = {
 	{9, 8, 9,  {"|1", "&", "a", "2", "&", "a", "3", "&", "a"}},
 	{12,8, 12, {"|1", "&", "a", "2", "&", "a", "3", "&", "a", "4", "&", "a"}}
 };
-
+static int current_pattern_index = 0;
 
 
 
@@ -168,14 +168,14 @@ double _calc_interval_sec(int bpm, const rhythm_pattern_t *pattern) {
 int _configure_metronome(int bpm, int top, int bottom) {
 
 	if (bpm < MIN_BPM || bpm > MAX_BPM) {
-		fprintf("-- ERROR: Invalid BPM '%d'! (Must be between '%d' and '%d')\n",
+		fprintf(stderr, "-- ERROR: Invalid BPM '%d'! (Must be between '%d' and '%d')\n",
 				bpm, MIN_BPM, MAX_BPM);
 		return -1;
 	}
 
 	const rhythm_pattern_t *target_rp = get_rhythm_pattern(top, bottom);
 	if (target_rp == NULL) {
-		fprintf("-- ERROR: Rhythm pattern not found matching provided args (ts-top: '%d', ts-bottom: '%d')!\n",
+		fprintf(stderr, "-- ERROR: Rhythm pattern not found matching provided args (ts-top: '%d', ts-bottom: '%d')!\n",
 				top, bottom);
 		return -1;
 	}
@@ -263,7 +263,36 @@ int _stop_metronome_timer() {
 	return _update_metronome_timer(_metro_timer_id, 0.0);
 }
 
+void _handle_metronome_pulse() {
+	const rhythm_pattern_t *rp = metro_cfg.rp;
+	int end_index = metro_cfg.rp->num_intervals - 1;
+	current_pattern_index = max( 0, min( end_index, current_pattern_index ));
 
+	// Play the current beat
+	const char *note = rp->pattern[current_pattern_index];
+	printf(note);
+
+	// Check if we have reached the end of the measure
+	bool is_end_of_measure = current_pattern_index >= end_index;
+	if (is_end_of_measure) {
+		// Reset index to first element
+		current_pattern_index = 0;
+
+		// If a new pattern is queued, apply it now
+		if (_pattern_update_pending) {
+			metro_cfg.rp = next_rpattern;
+			_pattern_update_pending = false; // reset the flag
+		}
+	}
+
+	// check if bpm has changed
+	if (_timer_update_pending) {
+		// Update the metronome timer tick rate
+		_update_metronome_timer(_metro_timer_id, metro_cfg.timer_interval_sec);
+
+		_timer_update_pending = false; // Flip off the flag.
+	}
+}
 
 /**
  * Dedicated worker thread function for the simulated Metronome driver.
@@ -316,39 +345,31 @@ void* metronome_thread_func(void* arg) {
 		// Process the message.
 		if (rcvid == 0) {
 			switch (msg.pulse.code) {
+
 				case QUIT_PULSE_CODE:
 					printf("[Metro] Received QUIT pulse. Stopping metronome...\n");
 					is_metro_looping = 0;
 					break;
 
-				case METRONOME_PULSE_CODE:
-
-					// IF reached end of measure...
-					//	// Check whether a new config has been set
-					//	if (next_config_pending) {
-					//		// Update the current config
-					//		current_config = next_config;
-					//		next_config_pending = false; // reset the flag
-					//	}
-
-					// check if bpm has changed
-					if (_timer_update_pending) {
-						// Update the metronome timer tick rate
-						_update_metronome_timer(_metro_timer_id, metro_cfg.timer_interval_sec);
-
-						_timer_update_pending = false; // Flip off the flag.
-					}
-
+				case METRONOME_PULSE_CODE: {
+					_handle_metronome_pulse();
 					break;
-				// other pulse handlers...
+				}
 
 				case SET_CONFIG_PULSE_CODE:
+					if (msg.pulse.value == METRO_CFG_ARGC) {
+						printf("[Metro] Received SET pulse with %d args. Settings will be applied in subsequent metronome timer pulses (bpm on next tick, pattern on next measure).\n", METRO_CFG_ARGC);
+					} else {
+						fprintf(stderr, "[Metro] Received SET with failed configuration - no changes to metronome operation.\n");
+					}
 					break;
+
 				case START_PULSE_CODE:
 					if (_start_metronome_timer() != 0) {
 						fprintf(stderr, "[Metro] Received START but metronome is already playing! Ignoring command...");
 					}
 					break;
+
 				case STOP_PULSE_CODE:
 					if (_stop_metronome_timer() != 0) {
 						fprintf(stderr, "[Metro] Received STOP but metronome is not playing! Ignoring command...");
@@ -489,7 +510,10 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 
 					// Attempt to configure the metronome
 					if (_configure_metronome(bpm, ts_top, ts_bottom) == 0) {
-						printf("\n[RM] SUCCESS! Metronome configured:\n %s\n\n", metronome_status_str);
+						printf("\n[RM] Configuration written:\n %s\n\n", metronome_status_str);
+						_send_metronome_pulse(SET_CONFIG_PULSE_CODE, METRO_CFG_ARGC);
+					} else {
+						_send_metronome_pulse(SET_CONFIG_PULSE_CODE, -1);
 					}
 
 				// Handle invalid argument format
