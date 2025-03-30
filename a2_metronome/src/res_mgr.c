@@ -14,6 +14,8 @@
 
 #define RM_EXPECTED_ARGC 4
 
+
+
 // Metronome vars
 const char *metronome_help_text =
 	"\nMetronome Resource Manager (ResMgr)\n"
@@ -60,6 +62,10 @@ static const rhythm_pattern_t rhythm_table[] = {
 	{9, 8, 9,  {"|1", "&", "a", "2", "&", "a", "3", "&", "a"}},
 	{12,8, 12, {"|1", "&", "a", "2", "&", "a", "3", "&", "a", "4", "&", "a"}}
 };
+
+
+
+
 
 /**
  * Helper method for fetching the pattern matching the specified top and bottom time-sig values.
@@ -129,6 +135,9 @@ void* svr_clean_exit_success() {
 	return NULL;
 }
 
+/**
+ * Helper function for updating the Metronome device status string
+ */
 void update_status_string(const metronome_config_t *cfg) {
 	memset(&metronome_status_str, 0, sizeof(metronome_status_str));
 	snprintf(metronome_status_str,
@@ -207,6 +216,9 @@ int update_metronome_timer(timer_t timer_id, double interval_sec) {
 	return 0;
 }
 
+/**
+ * Dedicated worker thread function for the simulated Metronome driver.
+ */
 void* metronome_thread_func(void* arg) {
 	// -- PHASE I: create a named channel to receive pulses
 	attach = name_attach( NULL, DEVICE_NAME, 0 );
@@ -422,6 +434,12 @@ int clt_clean_exit_success() {
 	return EXIT_SUCCESS;
 }
 
+/**
+ * Handles open requests for both /dev/local/metronome and /dev/local/metronome-help.
+ *
+ * If it's the main metronome device, connects to its pulse channel via name_open().
+ * Help page just uses default open behavior.
+ */
 int io_open(resmgr_context_t *ctp, io_open_t *msg, RESMGR_HANDLE_T *handle, void *extra) {
 	// Determine if this is the metronome or help file based on attribute pointer
 	if (handle == &metro_ioattr) {
@@ -468,7 +486,7 @@ int main(int argc, char *argv[]) {
 		return (EXIT_FAILURE);
 	}
 
-	// Init connect + ID func tables
+	// Init connect + Metronome IO func tables
 	iofunc_func_init(_RESMGR_CONNECT_NFUNCS, &connect_funcs,
 	                 _RESMGR_IO_NFUNCS, &io_funcs);
 	connect_funcs.open = io_open;
