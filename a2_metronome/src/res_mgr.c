@@ -186,9 +186,15 @@ int _configure_metronome(metronome_t *metro, int bpm, int top, int bottom) {
 		// Initialzize the metronome configuration
 		cfg->rp = target_rp;
 	}
+	// Check for overlapping configuration
+	else if (cfg->bpm == bpm && cfg->rp->top == top && cfg->rp->bottom == bottom) {
+			fprintf(stderr, "\n-- ERROR: Target configuration does not differ from current settings (bpm: '%d', top: '%d', bottom: '%d')!\n  ** No settings changed.\n",
+					bpm, top, bottom);
+			return -1;
+	}
+	// Queue up the target rhythm pattern for the next measure
 	else
 	{
-		// Queue up the target rhythm pattern for the next measure
 		metro->next_rp = target_rp;
 		metro->pattern_update_pending = true; // Trip the flag for update
 	}
@@ -434,8 +440,6 @@ void* metronome_thread_func(void* arg) {
 				case SET_CONFIG_PULSE_CODE:
 					if (msg->pulse.value.sival_int == METRO_CFG_ARGC) {
 						printf("[Metro] Received SET pulse with %d args. Settings will be applied in subsequent metronome timer pulses (bpm on next tick, pattern on next measure).\n", METRO_CFG_ARGC);
-					} else {
-						fprintf(stderr, "\n-- ERROR: [Metro] Received SET with failed configuration - no changes to metronome operation.\n");
 					}
 					printf("----------------------\n");
 					break;
