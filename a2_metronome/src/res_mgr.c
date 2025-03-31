@@ -607,6 +607,7 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 
 				break;
 
+			case CMD_INVALID:
 			default:
 				fprintf(stderr, "\n-- ERROR: [RM] Unknown or unhandled command: %s\n", command_buf);
 				break;
