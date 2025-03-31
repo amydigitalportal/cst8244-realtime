@@ -127,19 +127,28 @@ void* _svr_clean_exit_success() {
  * Helper function for updating the Metronome device status string
  */
 void _update_status_string(metronome_t *metro) {
-	metronome_config_t cfg = metro->cfg;
+	metronome_config_t *cfg = &(metro->cfg);
 
 	// Safely zero the actual buffer
 	memset(metro->status_str, 0, sizeof(metro->status_str));
+
+	int top = 0, bottom = 0;
+	if (metro->pattern_update_pending) {
+		top 	= metro->next_rp->top;
+		bottom 	= metro->next_rp->bottom;
+	} else {
+		top 	= cfg->rp->top;
+		bottom	= cfg->rp->bottom;
+	}
 
 	// Print into the actual buffer with the correct size
 	snprintf(metro->status_str,
 	         sizeof(metro->status_str),
 	         "[metronome: %d bpm, time signature %d/%d, interval: %.2f sec]\n",
-	         cfg.bpm,
-	         cfg.rp ? cfg.rp->top : 0,
-	         cfg.rp ? cfg.rp->bottom : 0,
-	         cfg.timer_interval_sec
+	         cfg->bpm,
+			 top,
+	         bottom,
+	         cfg->timer_interval_sec
 	);
 }
 
@@ -313,12 +322,16 @@ void _handle_metronome_pulse(metronome_t *metro) {
 
 		// If a new pattern is queued...
 		if (metro->pattern_update_pending) {
+			const rhythm_pattern_t *old_rp = cfg->rp;
+			const rhythm_pattern_t *new_rp = metro->next_rp;
+
 			// apply the new pattern to the current configuration.
-			rp = metro->next_rp;
+			cfg->rp = new_rp;
 			metro->pattern_update_pending = false; // reset the flag
 
-			printf("Starting new time signature: [ %d / %d ]\n",
-					rp->top, rp->bottom);
+			printf("Starting new time signature: [ %d/%d ] -> [ %d/%d ]\n",
+					old_rp->top, old_rp->bottom,
+					new_rp->top, new_rp->bottom);
 		}
 	} else {
 		// Advance the index to next element
@@ -390,7 +403,7 @@ void* metronome_thread_func(void* arg) {
 			switch (msg->pulse.code) {
 
 				case QUIT_PULSE_CODE:
-					printf("[Metro] Received QUIT pulse. Stopping metronome...\n");
+					printf("[Metro] Received QUIT pulse Stopping metronome...\n");
 					is_metro_looping = 0;
 					break;
 
