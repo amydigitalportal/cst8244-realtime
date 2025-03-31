@@ -267,6 +267,10 @@ int _stop_metronome_timer(metronome_t *metro) {
 
 void _handle_pause_pulse(metronome_t *metro, int pause_sec) {
 
+	if (metro->is_paused) {
+		fprintf(stderr, "-- ERROR: metronome already paused! Please wait for current pause cycle to finish.\n");
+	}
+
 	// Stop the repeating metronome timer
 	_stop_metronome_timer(metro);
 
