@@ -181,28 +181,34 @@ int _configure_metronome(metronome_t *metro, int bpm, int top, int bottom) {
 
 	metronome_config_t *cfg = &(metro->cfg);
 
-	// Check if current pattern is null (eg. on init)
+	// Check if config needs to be initialized
 	if (cfg->rp == NULL) {
-		// Initialzize the metronome configuration
+		// Initialzize configuration with target settings
 		cfg->rp = target_rp;
 	}
-	// Check for overlapping configuration
-	else if (cfg->bpm == bpm && cfg->rp->top == top && cfg->rp->bottom == bottom) {
-			fprintf(stderr, "\n-- ERROR: Target configuration does not differ from current settings (bpm: '%d', top: '%d', bottom: '%d')!\n  ** No settings changed.\n",
-					bpm, top, bottom);
-			return -1;
-	}
-	// Queue up the target rhythm pattern for the next measure
-	else
+	// Check if we have a diff in the rhythm pattern
+	else if (cfg->rp->top != top || cfg->rp->bottom != bottom)
 	{
+		// Queue up the target rhythm pattern for the next measure
 		metro->next_rp = target_rp;
 		metro->pattern_update_pending = true; // Trip the flag for update
 	}
 
-	// Update the BPM and timer tick rate (note: this will only take effect on the next "tick" of the timer)
-	cfg->bpm = bpm;
-	cfg->timer_interval_sec = _calc_interval_sec(bpm, target_rp);
-	metro->timer_update_pending = true;
+	// Check if there is a diff in the bpm
+	if (cfg->bpm != bpm)
+	{
+		// Update the BPM and timer tick rate (note: this will only take effect on the next "tick" of the timer)
+		cfg->bpm = bpm;
+		cfg->timer_interval_sec = _calc_interval_sec(bpm, target_rp);
+		metro->timer_update_pending = true;
+	}
+	// No changes.
+	else
+	{
+		fprintf(stderr, "\n-- ERROR: Target configuration does not differ from current settings (bpm: '%d', top: '%d', bottom: '%d')!\n  ** No settings changed.\n",
+				bpm, top, bottom);
+		return -1; // Skip post-processing.
+	}
 
 	// Update the Metronome's status string
 	_update_status_string(metro);
@@ -297,10 +303,6 @@ void _handle_pause_pulse(metronome_t *metro, int pause_sec) {
 
 void _handle_metronome_pulse(metronome_t *metro) {
 
-	// Handle stopped state
-	if (!metro->is_playing) {
-		return;
-	}
 
 	// Handle potential pause state
 	if (metro->is_paused) {
@@ -311,6 +313,11 @@ void _handle_metronome_pulse(metronome_t *metro) {
 		metro->is_paused = false;
 		_start_metronome_timer(metro);
 
+		return;
+	}
+
+	// Handle stopped state
+	if (!metro->is_playing) {
 		return;
 	}
 
@@ -550,6 +557,7 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 		// parse command and optional arguments
 		sscanf(msg_buf, "%s %[^\n]", command_buf, arg_buf); // second part can be variadic
 
+		fflush(stdout);
 		printf("\n----------------------\n");
 
 		// process command and (if provided) args
@@ -622,6 +630,16 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 		ocb->attr->flags |= IOFUNC_ATTR_MTIME | IOFUNC_ATTR_CTIME;
 
 	return (_RESMGR_NPARTS(0));
+}
+
+/**
+ * IO_WRITE handler for the help device.
+ */
+int _io_write_help(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
+	fprintf(stderr, "\n\n[metronome-help] Write attempt denied. This resource is read-only.\n\n");
+
+	// Return permission denied
+	return EROFS; // "Error Read-Only File System"
 }
 
 /**
@@ -737,6 +755,8 @@ int main(int argc, char *argv[]) {
 	iofunc_func_init(_RESMGR_CONNECT_NFUNCS, NULL,
 	                 _RESMGR_IO_NFUNCS, &help_io_funcs);
 	help_io_funcs.read = io_read_help;
+	help_io_funcs.write = _io_write_help;
+
 
 	iofunc_attr_init(&_help_attr, S_IFCHR | 0444, NULL, NULL); // read-only
 
