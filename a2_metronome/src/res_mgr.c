@@ -144,11 +144,12 @@ void _update_status_string(metronome_t *metro) {
 	// Print into the actual buffer with the correct size
 	snprintf(metro->status_str,
 	         sizeof(metro->status_str),
-	         "[metronome: %d bpm, time signature %d/%d, interval: %.2f sec]\n",
+	         "[metronome: %d beats/min, time signature %d/%d, secs-per-interval: %.2f, nanoSecs: %ld]\n",
 	         cfg->bpm,
 			 top,
 	         bottom,
-	         cfg->timer_interval_sec
+	         cfg->timer_interval_sec,
+			 cfg->timer_interval_fract_nano
 	);
 }
 
@@ -157,10 +158,11 @@ void _update_status_string(metronome_t *metro) {
  * Helper function used to calculate the seconds per tick interval for the metronome.
  */
 double _calc_interval_sec(int bpm, const rhythm_pattern_t *pattern) {
+
 	double sec_per_beat = 60.0 / (double)(bpm > 0 ? bpm : 1);
 	double sec_per_measure = sec_per_beat * pattern->top;
 
-	return (sec_per_measure / pattern->num_intervals);
+	return (sec_per_measure / (double)pattern->num_intervals);
 }
 
 
@@ -199,7 +201,11 @@ int _configure_metronome(metronome_t *metro, int bpm, int top, int bottom) {
 	{
 		// Update the BPM and timer tick rate (note: this will only take effect on the next "tick" of the timer)
 		cfg->bpm = bpm;
-		cfg->timer_interval_sec = _calc_interval_sec(bpm, target_rp);
+
+		double secs	= _calc_interval_sec(bpm, target_rp);
+
+		cfg->timer_interval_sec = secs;
+		cfg->timer_interval_fract_nano 	= (long)((secs - (long)secs) * 1e9); // extract fractional portion then convert to nanoseconds
 		metro->timer_update_pending = true;
 	}
 	// No changes.
@@ -223,9 +229,9 @@ int _update_metronome_timer(metronome_t *metro, double interval_sec) {
 	timer_t timer_id = metro->timer_id;
 	struct itimerspec itime = {0};
 
-	double adjusted_interval_sec = max(interval_sec, 0); // Safeguard against negative values.
-	long sec 	= (long)adjusted_interval_sec; // truncates decimal portion
-	long nsec 	= (long)((adjusted_interval_sec - sec) * 1e9); // convert fractional sec to nsec
+	double adjusted_interval_sec 	= max(interval_sec, 0); 		// Safeguard against negative values.
+	long sec 						= (long)adjusted_interval_sec; 	// truncates decimal portion
+	long nsec 						= (long)((adjusted_interval_sec - sec) * 1e9); // convert fractional sec to nsec
 
 	itime.it_value.tv_sec = sec;
 	itime.it_value.tv_nsec = nsec;
@@ -234,7 +240,7 @@ int _update_metronome_timer(metronome_t *metro, double interval_sec) {
 	itime.it_interval.tv_nsec = nsec;
 
 	// Update the metronome playing status
-	metro->is_playing = (sec > 0 || nsec > 0) ? 1 : 0;
+	metro->is_playing = (sec > 0 || nsec > 0) ? true : false;
 
 	// Update the timer
 	if (timer_settime(timer_id, 0, &itime, NULL) == -1) {
@@ -425,7 +431,7 @@ void* metronome_thread_func(void* arg) {
 			switch (msg->pulse.code) {
 
 				case QUIT_PULSE_CODE:
-					printf("[Metro] Received QUIT pulse Stopping metronome...\n");
+					printf("[Metro] Received QUIT pulse! Terminating metronome...\n");
 					is_metro_looping = 0;
 					break;
 
@@ -452,13 +458,17 @@ void* metronome_thread_func(void* arg) {
 					break;
 
 				case START_PULSE_CODE:
-					if (_start_metronome_timer(metro) != 0) {
+					if (_start_metronome_timer(metro) == 0) {
+						printf("[Metro] Received START pulse! Starting metronome...\n");
+					} else {
 						fprintf(stderr, "\n-- ERROR: [Metro] Received START but metronome is already playing! Ignoring command...");
 					}
 					break;
 
 				case STOP_PULSE_CODE:
-					if (_stop_metronome_timer(metro) != 0) {
+					if (_stop_metronome_timer(metro) == 0) {
+						printf("[Metro] Received STOP pulse! Stopping metronome...\n");
+					} else {
 						fprintf(stderr, "\n-- ERROR: [Metro] Received STOP but metronome is not playing! Ignoring command...");
 					}
 					break;

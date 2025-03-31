@@ -64,7 +64,8 @@ typedef struct {
 
 typedef struct {
 	int bpm;							// Beats per minute
-	double timer_interval_sec; 			// Tick interval of the timer
+	double timer_interval_sec; 			// Total tick interval of the timer, in seconds
+	long timer_interval_fract_nano;		// Fractional portion of the tick interval, in nanoseconds
 	const rhythm_pattern_t *rp;			// Current pattern configured to the metronome
 } metronome_config_t;
 
