@@ -26,7 +26,7 @@ const char *metronome_help_text =
 	"    quit         - quit the metronome\n"
 	"    set <bpm> <ts-top> <ts-bottom> - set the metronome to <bpm> ts-top/ts-bottom\n"
 	"    start        - start the metronome from stopped state\n"
-	"    stop         - stop the metronome; use ‘start’ to resume\n";
+	"    stop         - stop the metronome; use 'start' to resume\n";
 
 // Metronome
 metronome_t *metro;	// Structure holding data for a metronome device
@@ -287,6 +287,11 @@ void _handle_pause_pulse(metronome_t *metro, int pause_sec) {
 
 void _handle_metronome_pulse(metronome_t *metro) {
 
+	// Handle stopped state
+	if (!metro->is_playing) {
+		return;
+	}
+
 	// Handle potential pause state
 	if (metro->is_paused) {
 		printf("[Metro] Pause complete. Resuming metronome...\n");
@@ -537,6 +542,8 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 		// parse command and optional arguments
 		sscanf(msg_buf, "%s %[^\n]", command_buf, arg_buf); // second part can be variadic
 
+		printf("\n----------------------\n");
+
 		// process command and (if provided) args
 		command_t cmd = _parse_command(command_buf);
 		switch (cmd) {
@@ -571,8 +578,7 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 				break;
 
 			case CMD_SET:
-				printf("\n----------------------\n");
-				printf("[RM] Received SET command with args: { '%s' }\n", arg_buf);
+				printf("[RM] Received SET command with args: { '%s' } ...\n", arg_buf);
 
 				// Parse arguments from the arg buffer
 				int bpm = 0, ts_top = 0, ts_bottom = 0;
@@ -580,7 +586,7 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 
 					// Attempt to configure the metronome
 					if (_configure_metronome(metro, bpm, ts_top, ts_bottom) == 0) {
-						printf("\n[RM] Configuration written:\n %s\n", metro->status_str);
+						printf("[RM] Configuration written:\n %s\n", metro->status_str);
 						_send_metronome_pulse(SET_CONFIG_PULSE_CODE, METRO_CFG_ARGC);
 					} else {
 						_send_metronome_pulse(SET_CONFIG_PULSE_CODE, -1);
@@ -613,9 +619,6 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
  * Helper function to handle common cleanup on the ResMgr client.
  */
 void _clt_cleanup() {
-//	if (metronome_coid)
-//		name_close(metronome_coid);
-
 	if (metro->coid)
 		name_close(metro->coid);
 
