@@ -31,12 +31,6 @@ const char *metronome_help_text =
 // Metronome
 metronome_t *metro;	// Structure holding data for a metronome device
 
-// IPC vars
-my_message_t msg;
-name_attach_t* attach;
-int metronome_coid;
-int rcvid;
-
 // ResMgr globals
 iofunc_attr_t _metro_ioattr;
 iofunc_attr_t _help_attr;
@@ -72,7 +66,7 @@ const rhythm_pattern_t* get_rhythm_pattern(int top, int bottom) {
 	}
 
 	// No pattern matching args ...
-	fprintf(stderr, "[Metro] no rhythm pattern matching provided args (top: %d, bottom: %d)\n",
+	fprintf(stderr, "-- ERROR: [Metro] no rhythm pattern matching provided args (top: %d, bottom: %d)\n",
 			top, bottom);
 	return NULL;
 }
@@ -101,8 +95,8 @@ void _svr_cleanup() {
 	if (metro->timer_id != 0)
 		timer_delete(metro->timer_id);
 
-	if (attach != NULL)
-		name_detach(attach, 0);
+	if (metro->p_attach != NULL)
+		name_detach(metro->p_attach, 0);
 
 	// Signal ResMgr for shutdown
 	printf("[Metro] Signaling ResMgr for finalizing...\n");
@@ -154,8 +148,8 @@ void _update_status_string(metronome_t *metro) {
  * Helper function used to calculate the seconds per tick interval for the metronome.
  */
 double _calc_interval_sec(int bpm, const rhythm_pattern_t *pattern) {
-	long sec_per_beat = 60 / (bpm > 0 ? bpm : 1);
-	long sec_per_measure = sec_per_beat * pattern->top;
+	double sec_per_beat = 60.0 / (double)(bpm > 0 ? bpm : 1);
+	double sec_per_measure = sec_per_beat * pattern->top;
 
 	return (sec_per_measure / pattern->num_intervals);
 }
@@ -166,15 +160,13 @@ double _calc_interval_sec(int bpm, const rhythm_pattern_t *pattern) {
  */
 int _configure_metronome(metronome_t *metro, int bpm, int top, int bottom) {
 	if (bpm < MIN_BPM || bpm > MAX_BPM) {
-		fprintf(stderr, "-- ERROR: Invalid BPM '%d'! (Must be between '%d' and '%d')\n",
+		fprintf(stderr, "\n-- ERROR: Invalid BPM '%d'! (Must be between '%d' and '%d')\n",
 				bpm, MIN_BPM, MAX_BPM);
 		return -1;
 	}
 
 	const rhythm_pattern_t *target_rp = get_rhythm_pattern(top, bottom);
 	if (target_rp == NULL) {
-		fprintf(stderr, "-- ERROR: Rhythm pattern not found matching provided args (ts-top: '%d', ts-bottom: '%d')!\n",
-				top, bottom);
 		return -1;
 	}
 
@@ -264,7 +256,40 @@ int _stop_metronome_timer(metronome_t *metro) {
 	return _update_metronome_timer(metro, 0.0);
 }
 
+void _handle_pause_pulse(metronome_t *metro, int pause_sec) {
+
+	// Stop the repeating metronome timer
+	_stop_metronome_timer(metro);
+
+	// Arm the timer for a one-shot pause
+	struct itimerspec pause_timer = {0};
+	pause_timer.it_value.tv_sec = pause_sec;
+	pause_timer.it_value.tv_nsec = 0;
+	pause_timer.it_interval.tv_sec = 0;
+	pause_timer.it_interval.tv_nsec = 0;
+
+	if (timer_settime(metro->timer_id, 0, &pause_timer, NULL) == -1) {
+		perror("[Metro] Failed to set one-shot pause timer");
+	}
+
+	// Set a flag to indicate a restart afterward
+	metro->is_paused = true;
+}
+
 void _handle_metronome_pulse(metronome_t *metro) {
+
+	// Handle potential pause state
+	if (metro->is_paused) {
+		printf("[Metro] Pause complete. Resuming metronome...\n");
+		printf("----------------------\n");
+
+		// Clear the flag and restart the interval timer
+		metro->is_paused = false;
+		_start_metronome_timer(metro);
+
+		return;
+	}
+
 	metronome_config_t *cfg = &(metro->cfg);
 	const rhythm_pattern_t *rp = cfg->rp;
 
@@ -275,9 +300,10 @@ void _handle_metronome_pulse(metronome_t *metro) {
 	// Play (display) the current beat
 	const char *note = rp->pattern[current_pattern_index];
 	printf(note);
+	fflush(stdout); // force a print immediately
 
 	// Check if we are at the end of the measure
-	bool is_end_of_measure = current_pattern_index >= end_index;
+	bool is_end_of_measure = (current_pattern_index >= end_index);
 	if (is_end_of_measure) {
 		// Reset index to first element
 		current_pattern_index = 0;
@@ -288,9 +314,15 @@ void _handle_metronome_pulse(metronome_t *metro) {
 		// If a new pattern is queued...
 		if (metro->pattern_update_pending) {
 			// apply the new pattern to the current configuration.
-			cfg->rp = metro->next_rp;
+			rp = metro->next_rp;
 			metro->pattern_update_pending = false; // reset the flag
+
+			printf("Starting new time signature: [ %d / %d ]\n",
+					rp->top, rp->bottom);
 		}
+	} else {
+		// Advance the index to next element
+		current_pattern_index++;
 	}
 
 	// check if bpm has changed
@@ -308,9 +340,8 @@ void _handle_metronome_pulse(metronome_t *metro) {
 void* metronome_thread_func(void* arg) {
 
 	// -- PHASE I: create a named channel to receive pulses
-	name_attach_t* attach = metro->p_attach;
-
-	attach = name_attach( NULL, DEVICE_NAME, 0 );
+	name_attach_t *attach = metro->p_attach;
+	attach = name_attach(NULL, DEVICE_NAME, 0);
 	if (!attach) {
 		perror("[Metro] name_attach failed");
 		return _svr_clean_exit_failure;
@@ -334,7 +365,7 @@ void* metronome_thread_func(void* arg) {
 	// Start the interval timer
 	// (note: it is possible for the timer to send unhandled pulses before the first `MsgReceivePulse` call)
 	if (_start_metronome_timer(metro) != 0) {
-		fprintf(stderr, "[Metro] Failed to start timer on initialization!\n");
+		fprintf(stderr, "\n-- ERROR: [Metro] Failed to start timer on initialization!\n");
 		return _svr_clean_exit_failure();
 	}
 
@@ -342,24 +373,36 @@ void* metronome_thread_func(void* arg) {
 	int is_metro_looping = 1;
 	while (is_metro_looping) {
 
+		my_message_t *msg = &(metro->msg);
+
 		// Listen for a pulse
-		rcvid = MsgReceivePulse(attach->chid, &msg, sizeof(msg), NULL);
+		metro->rcvid = MsgReceivePulse(attach->chid, msg, sizeof(my_message_t), NULL);
 
 		// Safeguard against bad reception.
-		if (rcvid != 0) {
-			fprintf(stderr, "[Metro] MsgReceivePulse entountered unexpected error! rcvid: %d\n", rcvid);
+		if (metro->rcvid != 0) {
+			fprintf(stderr, "\n-- ERROR: [Metro] MsgReceivePulse entountered unexpected error! rcvid: %d\n", metro->rcvid);
 			// Terminate gracefully.
 			return _svr_clean_exit_failure();
 		}
 
 		// Process the message.
-		if (rcvid == 0) {
-			switch (msg.pulse.code) {
+		if (metro->rcvid == 0) {
+			switch (msg->pulse.code) {
 
 				case QUIT_PULSE_CODE:
 					printf("[Metro] Received QUIT pulse. Stopping metronome...\n");
 					is_metro_looping = 0;
 					break;
+
+				case PAUSE_PULSE_CODE: {
+					int pause_sec = max( METRO_MIN_PAUSE, min( METRO_MAX_PAUSE, msg->pulse.value.sival_int )); // adjust pause value to valid range
+
+					printf("\n----------------------\n");
+					printf("[Metro] Received PAUSE pulse. Delaying for '%d' seconds...\n", pause_sec);
+
+					_handle_pause_pulse(metro, pause_sec);
+					break;
+				}
 
 				case METRONOME_PULSE_CODE: {
 					_handle_metronome_pulse(metro);
@@ -367,22 +410,23 @@ void* metronome_thread_func(void* arg) {
 				}
 
 				case SET_CONFIG_PULSE_CODE:
-					if (msg.pulse.value.sival_int == METRO_CFG_ARGC) {
+					if (msg->pulse.value.sival_int == METRO_CFG_ARGC) {
 						printf("[Metro] Received SET pulse with %d args. Settings will be applied in subsequent metronome timer pulses (bpm on next tick, pattern on next measure).\n", METRO_CFG_ARGC);
 					} else {
-						fprintf(stderr, "[Metro] Received SET with failed configuration - no changes to metronome operation.\n");
+						fprintf(stderr, "\n-- ERROR: [Metro] Received SET with failed configuration - no changes to metronome operation.\n");
 					}
+					printf("----------------------\n");
 					break;
 
 				case START_PULSE_CODE:
 					if (_start_metronome_timer(metro) != 0) {
-						fprintf(stderr, "[Metro] Received START but metronome is already playing! Ignoring command...");
+						fprintf(stderr, "\n-- ERROR: [Metro] Received START but metronome is already playing! Ignoring command...");
 					}
 					break;
 
 				case STOP_PULSE_CODE:
 					if (_stop_metronome_timer(metro) != 0) {
-						fprintf(stderr, "[Metro] Received STOP but metronome is not playing! Ignoring command...");
+						fprintf(stderr, "\n-- ERROR: [Metro] Received STOP but metronome is not playing! Ignoring command...");
 					}
 					break;
 			}
@@ -454,9 +498,9 @@ int io_read_help(resmgr_context_t *ctp, io_read_t *msg, RESMGR_OCB_T *ocb) {
  */
 int _send_metronome_pulse(int code, intptr_t value) {
 	int prio = SchedGet(0, 0, NULL);
-	int result = MsgSendPulse(metronome_coid, prio, code, value);
+	int result = MsgSendPulse(metro->coid, prio, code, value);
 	if (result == -1) {
-		fprintf(stderr, "[RM] Failed to send pulse (code %d, value %ld): ", code, (long)value);
+		fprintf(stderr, "\n-- ERROR: [RM] Failed to send pulse (code %d, value %ld): ", code, (long)value);
 		perror("");
 	}
 	return result;
@@ -478,7 +522,7 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 		msg_buf[msg->i.nbytes - 1] = '\0'; // trim newline from the input
 
 		// parse command and optional arguments
-		sscanf(msg_buf, CMD_SCAN_FORMAT, command_buf, arg_buf);
+		sscanf(msg_buf, "%s %[^\n]", command_buf, arg_buf); // second part can be variadic
 
 		// process command and (if provided) args
 		command_t cmd = _parse_command(command_buf);
@@ -492,7 +536,7 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 				if (pause_time >= METRO_MIN_PAUSE && pause_time <= METRO_MAX_PAUSE) {
 					_send_metronome_pulse(PAUSE_PULSE_CODE, pause_time);
 				} else {
-					fprintf(stderr, "[RM] Invalid PAUSE duration: '%d' (must be %d to %d)\n",
+					fprintf(stderr, "\n-- ERROR: [RM] Invalid PAUSE duration: '%d' (must be %d to %d)\n",
 							pause_time, METRO_MIN_PAUSE, METRO_MAX_PAUSE);
 				}
 
@@ -514,7 +558,8 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 				break;
 
 			case CMD_SET:
-				printf("[RM] Received SET command with args: %s\n", arg_buf);
+				printf("\n----------------------\n");
+				printf("[RM] Received SET command with args: { '%s' }\n", arg_buf);
 
 				// Parse arguments from the arg buffer
 				int bpm = 0, ts_top = 0, ts_bottom = 0;
@@ -522,7 +567,7 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 
 					// Attempt to configure the metronome
 					if (_configure_metronome(metro, bpm, ts_top, ts_bottom) == 0) {
-						printf("\n[RM] Configuration written:\n %s\n\n", metro->status_str);
+						printf("\n[RM] Configuration written:\n %s\n", metro->status_str);
 						_send_metronome_pulse(SET_CONFIG_PULSE_CODE, METRO_CFG_ARGC);
 					} else {
 						_send_metronome_pulse(SET_CONFIG_PULSE_CODE, -1);
@@ -530,13 +575,13 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
 
 				// Handle invalid argument format
 				} else {
-					fprintf(stderr, "[RM] Invalid SET arguments.\n  Expected %s\n\n", USAGE_STR);
+					fprintf(stderr, "\n-- ERROR: [RM] Invalid SET arguments.\n  Expected %s\n\n", USAGE_STR);
 				}
 
 				break;
 
 			default:
-				fprintf(stderr, "[RM] Unknown or unhandled command: %s\n", command_buf);
+				fprintf(stderr, "\n-- ERROR: [RM] Unknown or unhandled command: %s\n", command_buf);
 				break;
 		}
 
@@ -555,9 +600,13 @@ int io_write(resmgr_context_t *ctp, io_write_t *msg, RESMGR_OCB_T *ocb) {
  * Helper function to handle common cleanup on the ResMgr client.
  */
 void _clt_cleanup() {
-	if (metronome_coid)
-		name_close(metronome_coid);
+//	if (metronome_coid)
+//		name_close(metronome_coid);
 
+	if (metro->coid)
+		name_close(metro->coid);
+
+	// Deallocate the metronome
 	free(metro);
 }
 
@@ -589,7 +638,7 @@ int io_open(resmgr_context_t *ctp, io_open_t *msg, RESMGR_HANDLE_T *handle, void
 	// Determine if this is the metronome or help file based on attribute pointer
 	if (handle == &_metro_ioattr) {
 		// Only open the metronome device connection
-		if ((metronome_coid = name_open(DEVICE_NAME, 0)) == -1) {
+		if ((metro->coid = name_open(DEVICE_NAME, 0)) == -1) {
 			perror("name_open failed.");
 			return EXIT_FAILURE;
 		}
@@ -634,7 +683,7 @@ int main(int argc, char *argv[]) {
 
 	// Crate dispatch structeur
 	if ((dpp = dispatch_create()) == NULL) {
-		fprintf(stderr, "%s:  Unable to allocate dispatch context.\n", argv[0]);
+		fprintf(stderr, "\n-- ERROR: [%s]  Unable to allocate dispatch context.\n", argv[0]);
 		return clt_clean_exit_failure();
 	}
 
@@ -651,11 +700,11 @@ int main(int argc, char *argv[]) {
 	// Attach primary device
 	if ((id = resmgr_attach(dpp, NULL, METRONOME_DEV_PATH, _FTYPE_ANY, 0,
 			&connect_funcs, &io_funcs, &_metro_ioattr)) == -1) {
-		fprintf(stderr, "%s:  Unable to attach %s.\n", argv[0], METRONOME_DEV_PATH);
+		fprintf(stderr, "\n-- ERROR: [%s] Unable to attach '%s'.\n", argv[0], METRONOME_DEV_PATH);
 		return clt_clean_exit_failure();
 	}
 
-	printf("myDevice: path '%s' registered to resource manager! Ready for dispatch ...\n",
+	printf("ResMgr: path '%s' registered and ready for dispatch ...\n",
 			METRONOME_DEV_PATH);
 
 
@@ -669,7 +718,7 @@ int main(int argc, char *argv[]) {
 	// Attach help-info page device
 	if ((help_id = resmgr_attach(dpp, NULL, METRONOME_HELP_DEV_PATH, _FTYPE_ANY, 0,
 			&connect_funcs, &help_io_funcs, &_help_attr)) == -1) {
-		fprintf(stderr, "%s: Unable to attach %s\n", argv[0], METRONOME_HELP_DEV_PATH);
+		fprintf(stderr, "\n-- ERROR: [%s] Unable to attach '%s'\n", argv[0], METRONOME_HELP_DEV_PATH);
 		return clt_clean_exit_failure();
 	}
 

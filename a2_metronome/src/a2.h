@@ -75,6 +75,12 @@ typedef struct {
 	bool pattern_update_pending;		// Flag indicating whether the pattern is to change on the next measure
 	bool timer_update_pending;			// Flag indicating whether the timer should change its tick rate
 	bool is_playing;					// The metronome play status.
+	bool is_paused;
+
+	my_message_t msg;
+	name_attach_t* p_attach;
+	int coid;
+	int rcvid;
 
 	pthread_t thread;  					// Worker thread simulating a driver for a metronome device.
 
